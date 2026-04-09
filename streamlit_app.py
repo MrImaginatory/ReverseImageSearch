@@ -43,21 +43,21 @@ st.sidebar.info(f"Connected to PostgreSQL. Total images: {total_count}")
 
 # Priority Slider
 st.sidebar.markdown("### Search Priority")
-color_weight = st.sidebar.slider(
-    "Balance Pattern vs Color",
+color_boost = st.sidebar.slider(
+    "Pattern Consistency vs Color Boost",
     min_value=0.0,
     max_value=1.0,
-    value=0.4,
+    value=0.5,
     step=0.1,
-    help="0.0 = Pattern Only, 1.0 = Color Only. 0.4-0.6 is balanced."
+    help="Determines how much color affects the final ranking. The product type is always kept consistent."
 )
 
-if color_weight < 0.3:
-    st.sidebar.caption("🎯 Focusing on **Patterns & Style**")
-elif color_weight > 0.7:
-    st.sidebar.caption("🎨 Focusing on **Exact Color Match**")
+if color_boost < 0.3:
+    st.sidebar.caption("🎯 Focusing on **Pattern & Object Types**")
+elif color_boost > 0.7:
+    st.sidebar.caption("🎨 **Strong Color Boost**: Prioritizing exact shades within the category.")
 else:
-    st.sidebar.caption("⚖️ **Balanced** Pattern and Color")
+    st.sidebar.caption("⚖️ **Smart Match**: Balancing category consistency and color.")
 
 st.sidebar.markdown("---")
 st.sidebar.title("Collection Management")
@@ -108,8 +108,8 @@ if uploaded_file is not None:
             query_emb = model.get_embedding(query_image)
             
             if query_emb is not None:
-                # Hybrid Search (Top match + 5 similar)
-                results = db.search_hybrid(query_emb.flatten(), query_color, color_weight=color_weight, limit=6)
+                # Smart Hybrid Search (Pattern mandatory + Color boost)
+                results = db.search_hybrid(query_emb.flatten(), query_color, color_weight=color_boost, limit=6)
                 
                 if results:
                     # Separate the top result

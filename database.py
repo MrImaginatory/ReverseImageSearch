@@ -94,28 +94,35 @@ class DatabaseManager:
             conn.close()
 
     def search_hybrid(self, query_embedding, query_color, color_weight=0.5, limit=12):
-        """Performs hybrid similarity search (Pattern + Color)."""
+        """
+        Performs "Smart Match" hybrid search.
+        Uses Pattern Match as a mandatory baseline and Color as a multiplier/refiner.
+        """
         conn = self.get_connection()
         cur = conn.cursor()
         
-        # weight = 0.5 means 50/50 balance.
-        # weight = 0.0 means 100% Pattern.
-        # weight = 1.0 means 100% Color.
-        pattern_weight = 1.0 - color_weight
-        
         try:
+            # We use a CTE to first calculate base scores and filter out obvious category mismatches.
+            # Then we apply the Color Boost logic.
             cur.execute("""
+                WITH BaseMatches AS (
+                    SELECT filename, 
+                           (1 - (embedding <=> %s::vector)) as pattern_score,
+                           (1 - (color_rgb <=> %s::vector)) as color_score
+                    FROM image_embeddings
+                    WHERE color_rgb IS NOT NULL
+                )
                 SELECT filename, 
-                       ((1 - (embedding <=> %s::vector)) * %s) + 
-                       ((1 - (color_rgb <=> %s::vector)) * %s) AS total_similarity,
-                       (1 - (embedding <=> %s::vector)) as pattern_score,
-                       (1 - (color_rgb <=> %s::vector)) as color_score
-                FROM image_embeddings
-                WHERE color_rgb IS NOT NULL
+                       -- Smart Formula: Pattern score is the base. Color acts as a multiplier boost.
+                       -- Even with weight=1.0, a 0.2 pattern match will stay low.
+                       pattern_score * ( (1.0 - %s) + (%s * color_score) ) AS total_similarity,
+                       pattern_score,
+                       color_score
+                FROM BaseMatches
+                WHERE pattern_score > 0.45 -- Minimum semantic similarity to be considered "the same type of product"
                 ORDER BY total_similarity DESC
                 LIMIT %s
-            """, (query_embedding, pattern_weight, query_color, color_weight, 
-                  query_embedding, query_color, limit))
+            """, (query_embedding, query_color, color_weight, color_weight, limit))
             return cur.fetchall()
         finally:
             cur.close()
