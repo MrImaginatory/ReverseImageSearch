@@ -77,28 +77,21 @@ def cosine_similarity(query_emb, database_embs):
     # Dot product since vectors are normalized
     return np.dot(database_embs, query_emb.T).flatten()
 
-def create_index(model, images_dir, db_file, progress_callback=None):
+def create_index(model, images_dir, db_manager, progress_callback=None):
     """
-    Scans the images directory, generates embeddings, and saves them to a pickle file.
+    Scans the images directory, generates embeddings, and saves them to the database.
     """
     image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
     total = len(image_files)
-    
-    embeddings = []
-    filenames = []
     
     for i, f in enumerate(image_files):
         path = os.path.join(images_dir, f)
         emb = model.get_embedding(path)
         if emb is not None:
-            embeddings.append(emb.flatten())
-            filenames.append(f)
+            # Save directly to DB
+            db_manager.save_embedding(f, emb.flatten())
         
         if progress_callback:
             progress_callback(i + 1, total)
             
-    # Save index
-    with open(db_file, "wb") as f:
-        pickle.dump({"embeddings": np.array(embeddings), "filenames": filenames}, f)
-        
-    return np.array(embeddings), filenames
+    return True
