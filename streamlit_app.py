@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 import json
 from PIL import Image
-from core import CLIPModel, cosine_similarity
+from core import CLIPModel, cosine_similarity, create_index
 
 # Set page config
 st.set_page_config(page_title="Visual Reverse Image Search", layout="wide")
@@ -35,8 +35,32 @@ def load_index():
 model = load_model()
 embeddings, filenames = load_index()
 
+# Sidebar
+st.sidebar.title("Collection Management")
+st.sidebar.info(f"Total images in collection: {len(filenames) if filenames else 0}")
+
+if st.sidebar.button("🔄 Re-index Collection"):
+    st.sidebar.warning("Indexing collection... Please wait.")
+    progress_bar = st.sidebar.progress(0)
+    status_text = st.sidebar.empty()
+    
+    def update_progress(current, total):
+        progress = current / total
+        progress_bar.progress(progress)
+        status_text.text(f"Processing: {current}/{total}")
+        
+    embeddings, filenames = create_index(model, IMAGES_DIR, DB_FILE, progress_callback=update_progress)
+    
+    # Clear cache and reload
+    st.cache_data.clear()
+    st.sidebar.success("Index updated successfully!")
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("Powered by CLIP ViT-B-32 ONNX")
+
 if embeddings is None:
-    st.error("Index not found. Please run `app.py` first to generate the image database.")
+    st.error("Index not found. Please click 'Re-index Collection' in the sidebar or run `app.py` first.")
     st.stop()
 
 # File uploader
@@ -87,7 +111,3 @@ if uploaded_file is not None:
                     st.warning("No similar images found even within the 60% threshold.")
             else:
                 st.error("Could not process the uploaded image.")
-
-st.sidebar.info(f"Total images in collection: {len(filenames)}")
-st.sidebar.markdown("---")
-st.sidebar.caption("Powered by CLIP ViT-B-32 ONNX")

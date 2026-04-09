@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import json
 from tqdm import tqdm
-from core import CLIPModel, cosine_similarity
+from core import CLIPModel, cosine_similarity, create_index
 
 def main():
     images_dir = "Images"
@@ -28,19 +28,15 @@ def main():
             filenames = data["filenames"]
     else:
         print("Indexing images in 'Images' folder (this may take a moment)...")
-        image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-        
-        for f in tqdm(image_files):
-            path = os.path.join(images_dir, f)
-            emb = model.get_embedding(path)
-            if emb is not None:
-                embeddings.append(emb.flatten())
-                filenames.append(f)
-        
-        # Save index
-        with open(db_file, "wb") as f:
-            pickle.dump({"embeddings": np.array(embeddings), "filenames": filenames}, f)
-        embeddings = np.array(embeddings)
+        # Use tqdm to show progress in CLI
+        pbar = tqdm(total=0) 
+        def update_pbar(current, total):
+            if pbar.total == 0:
+                pbar.total = total
+            pbar.update(1)
+            
+        embeddings, filenames = create_index(model, images_dir, db_file, progress_callback=update_pbar)
+        pbar.close()
         print(f"Indexed {len(filenames)} images.")
 
     # Search loop
