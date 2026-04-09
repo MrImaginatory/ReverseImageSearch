@@ -73,6 +73,37 @@ class CLIPModel:
             print(f"Error generating embedding: {e}")
             return None
 
+def get_dominant_color(image_path):
+    """
+    Extracts the dominant RGB color from an image.
+    Works by resizing the image to a small scale and calculating the median color.
+    """
+    if isinstance(image_path, str):
+        img = Image.open(image_path).convert('RGB')
+    else:
+        img = image_path.convert('RGB')
+    
+    # Resize to a small thumbnail to simplify color space
+    # 64x64 is small enough to be fast but maintains enough detail
+    img = img.resize((64, 64), Image.Resampling.LANCZOS)
+    
+    # We focus more on the center of the image to avoid background pixels (like rugs/walls)
+    width, height = img.size
+    left = width // 4
+    top = height // 4
+    right = 3 * width // 4
+    bottom = 3 * height // 4
+    img_center = img.crop((left, top, right, bottom))
+    
+    # Convert to numpy array
+    data = np.array(img_center)
+    
+    # Calculate median color across height and width
+    median_rgb = np.median(data, axis=(0, 1))
+    
+    # Normalize to 0-1 range for the vector
+    return median_rgb / 255.0
+
 def cosine_similarity(query_emb, database_embs):
     # Dot product since vectors are normalized
     return np.dot(database_embs, query_emb.T).flatten()
@@ -87,9 +118,11 @@ def create_index(model, images_dir, db_manager, progress_callback=None):
     for i, f in enumerate(image_files):
         path = os.path.join(images_dir, f)
         emb = model.get_embedding(path)
+        color_vec = get_dominant_color(path)
+        
         if emb is not None:
-            # Save directly to DB
-            db_manager.save_embedding(f, emb.flatten())
+            # Save directly to DB with color
+            db_manager.save_embedding(f, emb.flatten(), color_rgb=color_vec)
         
         if progress_callback:
             progress_callback(i + 1, total)

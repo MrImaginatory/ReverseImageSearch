@@ -21,7 +21,6 @@ class DatabaseManager:
 
     def _init_db(self):
         """Initializes the database schema."""
-        # Connect to default postgres DB to manage other databases
         conn_master = psycopg2.connect(
             host=self.conn_params["host"],
             port=self.conn_params["port"],
@@ -32,7 +31,6 @@ class DatabaseManager:
         conn_master.autocommit = True
         cur_master = conn_master.cursor()
         
-        # Check if target database exists
         cur_master.execute(f"SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s", (self.conn_params['dbname'],))
         if not cur_master.fetchone():
             cur_master.execute(f'CREATE DATABASE "{self.conn_params["dbname"]}"')
@@ -40,83 +38,95 @@ class DatabaseManager:
         cur_master.close()
         conn_master.close()
 
-        # Connect to the target DB to create extensions and tables
-        # Use register=False because the extension might not exist yet!
         conn = self.get_connection(register=False)
         conn.autocommit = True
         cur = conn.cursor()
         
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
         
-        # Now we can register vector on the original connection if we wanted, 
-        # but for internal setup we just need to create the table
+        # Table with both pattern and color vectors
         cur.execute("""
             CREATE TABLE IF NOT EXISTS image_embeddings (
                 id SERIAL PRIMARY KEY,
                 filename TEXT UNIQUE NOT NULL,
-                embedding VECTOR(512) NOT NULL
+                embedding VECTOR(512) NOT NULL,
+                color_rgb VECTOR(3)
             )
+        """)
+        
+        # Add column if it doesn't exist (for existing DBs)
+        cur.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name='image_embeddings' AND column_name='color_rgb') THEN
+                    ALTER TABLE image_embeddings ADD COLUMN color_rgb VECTOR(3);
+                END IF;
+            END $$;
         """)
         
         cur.close()
         conn.close()
 
-    def save_embedding(self, filename, embedding):
-        """Inserts or updates an image embedding."""
+    def save_embedding(self, filename, embedding, color_rgb=None):
+        """Inserts or updates an image embedding and color."""
         conn = self.get_connection()
         cur = conn.cursor()
         try:
-            cur.execute("""
-                INSERT INTO image_embeddings (filename, embedding)
-                VALUES (%s, %s)
-                ON CONFLICT (filename) DO UPDATE 
-                SET embedding = EXCLUDED.embedding
-            """, (filename, embedding.tolist()))
+            if color_rgb is not None:
+                cur.execute("""
+                    INSERT INTO image_embeddings (filename, embedding, color_rgb)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (filename) DO UPDATE 
+                    SET embedding = EXCLUDED.embedding,
+                        color_rgb = EXCLUDED.color_rgb
+                """, (filename, embedding.tolist(), color_rgb.tolist()))
+            else:
+                cur.execute("""
+                    INSERT INTO image_embeddings (filename, embedding)
+                    VALUES (%s, %s)
+                    ON CONFLICT (filename) DO UPDATE 
+                    SET embedding = EXCLUDED.embedding
+                """, (filename, embedding.tolist()))
             conn.commit()
         finally:
             cur.close()
             conn.close()
 
-    def search_similarity(self, query_embedding, limit=10):
-        """Performs vector similarity search."""
+    def search_hybrid(self, query_embedding, query_color, color_weight=0.5, limit=12):
+        """Performs hybrid similarity search (Pattern + Color)."""
         conn = self.get_connection()
         cur = conn.cursor()
+        
+        # weight = 0.5 means 50/50 balance.
+        # weight = 0.0 means 100% Pattern.
+        # weight = 1.0 means 100% Color.
+        pattern_weight = 1.0 - color_weight
+        
         try:
-            # Using <-> for L2 distance or <=> for cosine distance
-            # Since CLIP embeddings are normalized, they are equivalent
             cur.execute("""
-                SELECT filename, 1 - (embedding <=> %s::vector) AS cosine_similarity
+                SELECT filename, 
+                       ((1 - (embedding <=> %s::vector)) * %s) + 
+                       ((1 - (color_rgb <=> %s::vector)) * %s) AS total_similarity,
+                       (1 - (embedding <=> %s::vector)) as pattern_score,
+                       (1 - (color_rgb <=> %s::vector)) as color_score
                 FROM image_embeddings
-                ORDER BY cosine_similarity DESC
+                WHERE color_rgb IS NOT NULL
+                ORDER BY total_similarity DESC
                 LIMIT %s
-            """, (query_embedding, limit))
+            """, (query_embedding, pattern_weight, query_color, color_weight, 
+                  query_embedding, query_color, limit))
             return cur.fetchall()
         finally:
             cur.close()
             conn.close()
 
     def get_total_count(self):
-        conn = self.get_connection()
+        conn = self.get_connection(register=False)
         cur = conn.cursor()
         try:
             cur.execute("SELECT COUNT(*) FROM image_embeddings")
             return cur.fetchone()[0]
-        finally:
-            cur.close()
-            conn.close()
-
-    def get_all_data(self):
-        """Returns all embeddings and filenames (fallback for legacy logic if needed)."""
-        conn = self.get_connection()
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT embedding, filename FROM image_embeddings")
-            rows = cur.fetchall()
-            if not rows:
-                return np.array([]), []
-            embeddings = np.array([r[0] for r in rows])
-            filenames = [r[1] for r in rows]
-            return embeddings, filenames
         finally:
             cur.close()
             conn.close()

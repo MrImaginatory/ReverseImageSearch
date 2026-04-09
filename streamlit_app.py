@@ -2,14 +2,15 @@ import streamlit as st
 import os
 import json
 from PIL import Image
-from core import CLIPModel, create_index
+import numpy as np
+from core import CLIPModel, create_index, get_dominant_color
 from database import DatabaseManager
 
 # Set page config
-st.set_page_config(page_title="Visual Reverse Image Search", layout="wide")
+st.set_page_config(page_title="Visual Hybrid Image Search", layout="wide")
 
-st.title("🛍️ Reverse Image Search")
-st.markdown("Upload an image to find similar items in the collection (PostgreSQL Powered).")
+st.title("🛍️ Hybrid Reverse Image Search")
+st.markdown("Combines **Pattern Recognition** (AI) and **Color Analysis** for more accurate results.")
 
 # Directories
 IMAGES_DIR = "Images"
@@ -36,12 +37,32 @@ except Exception as e:
     st.stop()
 
 # Sidebar
-st.sidebar.title("Collection Management")
+st.sidebar.title("Search Controls")
 total_count = db.get_total_count()
 st.sidebar.info(f"Connected to PostgreSQL. Total images: {total_count}")
 
+# Priority Slider
+st.sidebar.markdown("### Search Priority")
+color_weight = st.sidebar.slider(
+    "Balance Pattern vs Color",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.4,
+    step=0.1,
+    help="0.0 = Pattern Only, 1.0 = Color Only. 0.4-0.6 is balanced."
+)
+
+if color_weight < 0.3:
+    st.sidebar.caption("🎯 Focusing on **Patterns & Style**")
+elif color_weight > 0.7:
+    st.sidebar.caption("🎨 Focusing on **Exact Color Match**")
+else:
+    st.sidebar.caption("⚖️ **Balanced** Pattern and Color")
+
+st.sidebar.markdown("---")
+st.sidebar.title("Collection Management")
 if st.sidebar.button("🔄 Update DB Index"):
-    st.sidebar.warning("Indexing collection... Please wait.")
+    st.sidebar.warning("Processing collection (AI + Color)...")
     progress_bar = st.sidebar.progress(0)
     status_text = st.sidebar.empty()
     
@@ -56,7 +77,7 @@ if st.sidebar.button("🔄 Update DB Index"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Powered by CLIP + pgvector")
+st.sidebar.caption("Powered by CLIP + pgvector Hybrid Engine")
 
 if total_count == 0:
     st.warning("The database is currently empty. Please upload images to 'Images/' and click 'Update DB Index'.")
@@ -72,37 +93,59 @@ if uploaded_file is not None:
     
     with col1:
         st.subheader("Query Image")
-        st.image(query_image, use_container_width=True)
+        st.image(query_image, width=400) # Use explicit width or 'stretch'
+        
+        # Show extraction preview
+        query_color = get_dominant_color(query_image)
+        st.markdown("**Extracted Dominant Color:**")
+        # Visual color block
+        hex_color = '#%02x%02x%02x' % tuple((query_color * 255).astype(int))
+        st.markdown(f'<div style="background-color:{hex_color}; width:100%; height:40px; border-radius:5px; border:1px solid #ddd;"></div>', unsafe_allow_html=True)
     
     with col2:
-        st.subheader("Search Results")
-        with st.spinner("Searching PostgreSQL database..."):
+        st.subheader("Results")
+        with st.spinner("Executing hybrid search..."):
             query_emb = model.get_embedding(query_image)
             
             if query_emb is not None:
-                # Search via SQL
-                results = db.search_similarity(query_emb.flatten(), limit=12)
+                # Hybrid Search (Top match + 5 similar)
+                results = db.search_hybrid(query_emb.flatten(), query_color, color_weight=color_weight, limit=6)
                 
-                high_conf = [r for r in results if r[1] >= 0.80]
-                rec = [r for r in results if 0.60 <= r[1] < 0.80]
-                
-                if high_conf:
-                    st.success(f"Found {len(high_conf)} high-confidence matches (>80%)")
-                    cols = st.columns(3)
-                    for i, (name, score) in enumerate(high_conf[:6]):
-                        with cols[i % 3]:
-                            img_path = os.path.join(IMAGES_DIR, name)
-                            st.image(img_path, caption=f"{name} ({score:.2f})", use_container_width=True)
-                
-                elif rec:
-                    st.info("Showing recommendations (60-80% similarity):")
-                    cols = st.columns(3)
-                    for i, (name, score) in enumerate(rec[:6]):
-                        with cols[i % 3]:
-                            img_path = os.path.join(IMAGES_DIR, name)
-                            st.image(img_path, caption=f"{name} ({score:.2f})", use_container_width=True)
-                
+                if results:
+                    # Separate the top result
+                    top_result = results[0]
+                    other_results = results[1:]
+                    
+                    st.success(f"Matched {len(results)} items using Hybrid Ranking")
+                    
+                    # 1. Display Founded Product
+                    st.markdown("### 🏆 Founded Product")
+                    name, total_score, p_score, c_score = top_result
+                    img_path = os.path.join(IMAGES_DIR, name)
+                    
+                    f_col1, f_col2 = st.columns([1, 1])
+                    with f_col1:
+                        st.image(img_path, width=400)
+                    with f_col2:
+                        st.info(f"**Filename:** {name}")
+                        st.metric("Overall Match", f"{total_score:.2%}")
+                        st.progress(total_score)
+                        st.caption(f"Pattern Accuracy: {p_score:.2f} | Color Accuracy: {c_score:.2f}")
+
+                    st.markdown("---")
+                    
+                    # 2. Display Similar Products (Max 5)
+                    if other_results:
+                        st.markdown("### 🔍 Similar Products")
+                        other_results = other_results[:5] # Enforce max 5
+                        cols = st.columns(3)
+                        for i, (name, total_score, p_score, c_score) in enumerate(other_results):
+                            with cols[i % 3]:
+                                img_path = os.path.join(IMAGES_DIR, name)
+                                st.image(img_path, width=280)
+                                st.markdown(f"**Match: {total_score:.1%}**")
+                                st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f}")
                 else:
-                    st.warning("No similar images found.")
+                    st.warning("No matches found.")
             else:
                 st.error("Processing failed.")
