@@ -12,9 +12,10 @@ st.set_page_config(page_title="Visual Hybrid Image Search", layout="wide")
 st.title("🛍️ Hybrid Reverse Image Search")
 st.markdown("Combines **Pattern Recognition** (AI) and **Color Analysis** for more accurate results.")
 
-# Directories
-IMAGES_DIR = "Images"
-MODEL_DIR = "ClipVit"
+# Paths relative to the script's parent directory
+PARENT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+IMAGES_DIR = os.path.join(PARENT_DIR, "Images")
+MODEL_DIR = os.path.join(PARENT_DIR, "ClipVit")
 
 @st.cache_resource
 def load_model():

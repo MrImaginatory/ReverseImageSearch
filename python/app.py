@@ -1,13 +1,20 @@
 import os
 import json
 import numpy as np
+import sys
 from tqdm import tqdm
+
+# Add the streamlit directory to sys.path to import shared logic
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "streamlit")))
+
 from core import CLIPModel, create_index
 from database import DatabaseManager
 
 def main():
-    images_dir = "Images"
-    model_dir = "ClipVit"
+    # Paths relative to the script's parent directory
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    images_dir = os.path.join(base_dir, "Images")
+    model_dir = os.path.join(base_dir, "ClipVit")
     
     # Initialize DB
     print("Connecting to PostgreSQL collection...")
