@@ -1,0 +1,5 @@
+onnxruntime
+numpy
+pillow
+tqdm
+pickle-mixin
