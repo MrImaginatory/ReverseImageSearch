@@ -128,13 +128,21 @@ def main():
             continue
             
         similarities = cosine_similarity(query_emb.flatten(), embeddings)
+        sorted_indices = np.argsort(similarities)[::-1]
         
-        # Get top 5
-        top_indices = np.argsort(similarities)[::-1][:5]
+        high_conf_indices = [idx for idx in sorted_indices if similarities[idx] >= 0.80]
+        recommended_indices = [idx for idx in sorted_indices if 0.60 <= similarities[idx] < 0.80]
         
-        print("\nTop 5 Similar Images:")
-        for i, idx in enumerate(top_indices):
-            print(f"{i+1}. {filenames[idx]} (Score: {similarities[idx]:.4f})")
+        if high_conf_indices:
+            print(f"\nFound {len(high_conf_indices)} images with more than 80% similarity:")
+            for i, idx in enumerate(high_conf_indices[:5]): # Show top 5 high-confidence
+                print(f"{i+1}. {filenames[idx]} (Score: {similarities[idx]:.4f})")
+        elif recommended_indices:
+            print("\nNo images found with > 80% similarity. Showing recommendations (60-80% similarity):")
+            for i, idx in enumerate(recommended_indices[:5]):
+                print(f"{i+1}. {filenames[idx]} (Score: {similarities[idx]:.4f})")
+        else:
+            print("\nNo similar images found even within the 60% threshold.")
 
 if __name__ == "__main__":
     main()
