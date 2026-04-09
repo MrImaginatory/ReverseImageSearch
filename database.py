@@ -93,6 +93,28 @@ class DatabaseManager:
             cur.close()
             conn.close()
 
+    def delete_embedding(self, filename):
+        """Removes an image from the database."""
+        conn = self.get_connection(register=False)
+        cur = conn.cursor()
+        try:
+            cur.execute("DELETE FROM image_embeddings WHERE filename = %s", (filename,))
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+
+    def get_all_filenames(self):
+        """Returns a set of all indexed filenames."""
+        conn = self.get_connection(register=False)
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT filename FROM image_embeddings")
+            return set(row[0] for row in cur.fetchall())
+        finally:
+            cur.close()
+            conn.close()
+
     def search_hybrid(self, query_embedding, query_color, color_weight=0.5, limit=12):
         """
         Performs "Smart Match" hybrid search.
@@ -102,8 +124,6 @@ class DatabaseManager:
         cur = conn.cursor()
         
         try:
-            # We use a CTE to first calculate base scores and filter out obvious category mismatches.
-            # Then we apply the Color Boost logic.
             cur.execute("""
                 WITH BaseMatches AS (
                     SELECT filename, 
@@ -113,13 +133,11 @@ class DatabaseManager:
                     WHERE color_rgb IS NOT NULL
                 )
                 SELECT filename, 
-                       -- Smart Formula: Pattern score is the base. Color acts as a multiplier boost.
-                       -- Even with weight=1.0, a 0.2 pattern match will stay low.
                        pattern_score * ( (1.0 - %s) + (%s * color_score) ) AS total_similarity,
                        pattern_score,
                        color_score
                 FROM BaseMatches
-                WHERE pattern_score > 0.45 -- Minimum semantic similarity to be considered "the same type of product"
+                WHERE pattern_score > 0.45 
                 ORDER BY total_similarity DESC
                 LIMIT %s
             """, (query_embedding, query_color, color_weight, color_weight, limit))

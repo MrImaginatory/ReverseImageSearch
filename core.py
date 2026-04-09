@@ -110,12 +110,27 @@ def cosine_similarity(query_emb, database_embs):
 
 def create_index(model, images_dir, db_manager, progress_callback=None):
     """
-    Scans the images directory, generates embeddings, and saves them to the database.
+    Synchronizes the images directory with the database.
+    Only processes new images and removes missing ones.
     """
-    image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-    total = len(image_files)
+    # 1. Get current state
+    all_files = set(f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')))
+    indexed_files = db_manager.get_all_filenames()
     
-    for i, f in enumerate(image_files):
+    # 2. Identify changes
+    new_files = list(all_files - indexed_files)
+    deleted_files = list(indexed_files - all_files)
+    
+    # 3. Clean up deleted images
+    for f in deleted_files:
+        db_manager.delete_embedding(f)
+        
+    if not new_files:
+        return True # Nothing to index
+
+    # 4. Process new images
+    total = len(new_files)
+    for i, f in enumerate(new_files):
         path = os.path.join(images_dir, f)
         emb = model.get_embedding(path)
         color_vec = get_dominant_color(path)

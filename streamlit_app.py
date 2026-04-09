@@ -118,19 +118,23 @@ if uploaded_file is not None:
                     
                     st.success(f"Matched {len(results)} items using Hybrid Ranking")
                     
-                    # 1. Display Founded Product
-                    st.markdown("### 🏆 Founded Product")
+                    # 1. Display Founded Product (85% confidence threshold)
                     name, total_score, p_score, c_score = top_result
                     img_path = os.path.join(IMAGES_DIR, name)
                     
-                    f_col1, f_col2 = st.columns([1, 1])
-                    with f_col1:
-                        st.image(img_path, width=400)
-                    with f_col2:
-                        st.info(f"**Filename:** {name}")
-                        st.metric("Overall Match", f"{total_score:.2%}")
-                        st.progress(total_score)
-                        st.caption(f"Pattern Accuracy: {p_score:.2f} | Color Accuracy: {c_score:.2f}")
+                    st.markdown("### 🏆 Founded Product")
+                    if total_score >= 0.85:
+                        f_col1, f_col2 = st.columns([1, 1])
+                        with f_col1:
+                            st.image(img_path, width=400)
+                        with f_col2:
+                            st.info(f"**Filename:** {name}")
+                            st.metric("Overall Match", f"{total_score:.2%}")
+                            st.progress(total_score)
+                            st.caption(f"Pattern Accuracy: {p_score:.2f} | Color Accuracy: {c_score:.2f}")
+                    else:
+                        st.warning("⚠️ No exact product match found (Score below 85% confidence)")
+                        st.info("Try adjusting the 'Pattern vs Color' slider or check our Similar Products below.")
 
                     st.markdown("---")
                     
