@@ -3,7 +3,7 @@ import os
 import json
 from PIL import Image
 import numpy as np
-from core import CLIPModel, create_index, get_dominant_color
+from core import CLIPModel, create_index, get_dominant_color, get_texture_vector
 from database import DatabaseManager
 
 # Set page config
@@ -42,23 +42,32 @@ st.sidebar.title("Search Controls")
 total_count = db.get_total_count()
 st.sidebar.info(f"Connected to PostgreSQL. Total images: {total_count}")
 
-# Priority Slider
+# Priority Sliders
 st.sidebar.markdown("### Search Priority")
 color_boost = st.sidebar.slider(
-    "Pattern Consistency vs Color Boost",
+    "Color Boost",
     min_value=0.0,
-    max_value=1.0,
-    value=0.5,
-    step=0.1,
-    help="Determines how much color affects the final ranking. The product type is always kept consistent."
+    max_value=0.5,
+    value=0.2,
+    step=0.05,
+    help="How much color affects the final ranking."
 )
 
-if color_boost < 0.3:
-    st.sidebar.caption("🎯 Focusing on **Pattern & Object Types**")
-elif color_boost > 0.7:
-    st.sidebar.caption("🎨 **Strong Color Boost**: Prioritizing exact shades within the category.")
+texture_boost = st.sidebar.slider(
+    "Texture/Pattern Refinement",
+    min_value=0.0,
+    max_value=0.5,
+    # default to 0.1 for a nice default balance
+    value=0.15,
+    step=0.05,
+    help="How much surface texture (stripes, dots, etc.) affects the ranking."
+)
+
+total_boost = color_boost + texture_boost
+if total_boost > 0:
+    st.sidebar.caption(f"⚖️ **Hybrid Mode**: Refined by {color_boost:.0%} Color & {texture_boost:.0%} Texture.")
 else:
-    st.sidebar.caption("⚖️ **Smart Match**: Balancing category consistency and color.")
+    st.sidebar.caption("🎯 Focusing strictly on **Semantic Match**.")
 
 st.sidebar.markdown("---")
 st.sidebar.title("Collection Management")
@@ -109,8 +118,16 @@ if uploaded_file is not None:
             query_emb = model.get_embedding(query_image)
             
             if query_emb is not None:
-                # Smart Hybrid Search (Pattern mandatory + Color boost)
-                results = db.search_hybrid(query_emb.flatten(), query_color, color_weight=color_boost, limit=6)
+                # Smart Hybrid Search (Pattern mandatory + Color & Texture boost)
+                query_texture = get_texture_vector(query_image)
+                results = db.search_hybrid(
+                    query_emb.flatten(), 
+                    query_color, 
+                    query_texture=query_texture,
+                    color_weight=color_boost, 
+                    texture_weight=texture_boost,
+                    limit=6
+                )
                 
                 if results:
                     # Separate the top result
@@ -120,11 +137,11 @@ if uploaded_file is not None:
                     st.success(f"Matched {len(results)} items using Hybrid Ranking")
                     
                     # 1. Display Founded Product (85% confidence threshold)
-                    name, total_score, p_score, c_score = top_result
+                    name, total_score, p_score, c_score, t_score = top_result
                     img_path = os.path.join(IMAGES_DIR, name)
                     
                     st.markdown("### 🏆 Founded Product")
-                    if total_score >= 0.85:
+                    if total_score >= 0.90:
                         f_col1, f_col2 = st.columns([1, 1])
                         with f_col1:
                             st.image(img_path, width=400)
@@ -132,7 +149,7 @@ if uploaded_file is not None:
                             st.info(f"**Filename:** {name}")
                             st.metric("Overall Match", f"{total_score:.2%}")
                             st.progress(total_score)
-                            st.caption(f"Pattern Accuracy: {p_score:.2f} | Color Accuracy: {c_score:.2f}")
+                            st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
                     else:
                         st.warning("⚠️ No exact product match found (Score below 85% confidence)")
                         st.info("Try adjusting the 'Pattern vs Color' slider or check our Similar Products below.")
@@ -144,12 +161,12 @@ if uploaded_file is not None:
                         st.markdown("### 🔍 Similar Products")
                         other_results = other_results[:5] # Enforce max 5
                         cols = st.columns(3)
-                        for i, (name, total_score, p_score, c_score) in enumerate(other_results):
+                        for i, (name, total_score, p_score, c_score, t_score) in enumerate(other_results):
                             with cols[i % 3]:
                                 img_path = os.path.join(IMAGES_DIR, name)
                                 st.image(img_path, width=280)
                                 st.markdown(f"**Match: {total_score:.1%}**")
-                                st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f}")
+                                st.caption(f"P: {p_score:.2f} | C: {c_score:.2f} | T: {t_score:.2f}")
                 else:
                     st.warning("No matches found.")
             else:

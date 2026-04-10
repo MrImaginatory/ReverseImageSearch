@@ -104,6 +104,41 @@ def get_dominant_color(image_path):
     # Normalize to 0-1 range for the vector
     return median_rgb / 255.0
 
+def get_texture_vector(image_path):
+    """
+    Extracts a texture descriptor using Local Binary Patterns (LBP).
+    Works by comparing relative intensities in a 3x3 neighborhood.
+    Returns a normalized 32-bin histogram as a vector.
+    """
+    if isinstance(image_path, str):
+        img = Image.open(image_path).convert('L')
+    else:
+        img = image_path.convert('L')
+    
+    # Resize to standard size for pattern consistency
+    img = img.resize((256, 256), Image.Resampling.LANCZOS)
+    data = np.array(img)
+    
+    # Vectorized LBP (8 neighbors)
+    # Pad to handle edges
+    data_pad = np.pad(data, 1, mode='edge')
+    lbp = np.zeros_like(data, dtype=np.uint16)
+    
+    # Neighbor offsets
+    offsets = [(-1,-1), (-1,0), (-1,1), (0,1), (1,1), (1,0), (1,-1), (0,-1)]
+    for i, (dy, dx) in enumerate(offsets):
+        # Slice neighbor area and compare with center
+        neighbor = data_pad[1+dy : 1+dy+data.shape[0], 1+dx : 1+dx+data.shape[1]]
+        lbp += (neighbor >= data).astype(np.uint16) * (2**i)
+    
+    # Create histogram and reduce to 32 bins for efficiency
+    hist, _ = np.histogram(lbp, bins=32, range=(0, 255))
+    
+    # Normalize for cosine similarity
+    hist = hist.astype(np.float32)
+    norm = np.linalg.norm(hist)
+    return hist / norm if norm > 0 else hist
+
 def cosine_similarity(query_emb, database_embs):
     # Dot product since vectors are normalized
     return np.dot(database_embs, query_emb.T).flatten()
@@ -134,10 +169,11 @@ def create_index(model, images_dir, db_manager, progress_callback=None):
         path = os.path.join(images_dir, f)
         emb = model.get_embedding(path)
         color_vec = get_dominant_color(path)
+        texture_vec = get_texture_vector(path)
         
         if emb is not None:
-            # Save directly to DB with color
-            db_manager.save_embedding(f, emb.flatten(), color_rgb=color_vec)
+            # Save directly to DB with color and texture
+            db_manager.save_embedding(f, emb.flatten(), color_rgb=color_vec, texture_vec=texture_vec)
         
         if progress_callback:
             progress_callback(i + 1, total)

@@ -44,50 +44,50 @@ class DatabaseManager:
         
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
         
-        # Table with both pattern and color vectors
+        # Table with pattern, color, and texture vectors
         cur.execute("""
             CREATE TABLE IF NOT EXISTS image_embeddings (
                 id SERIAL PRIMARY KEY,
                 filename TEXT UNIQUE NOT NULL,
                 embedding VECTOR(512) NOT NULL,
-                color_rgb VECTOR(3)
+                color_rgb VECTOR(3),
+                texture_vector VECTOR(32)
             )
         """)
         
-        # Add column if it doesn't exist (for existing DBs)
-        cur.execute("""
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                               WHERE table_name='image_embeddings' AND column_name='color_rgb') THEN
-                    ALTER TABLE image_embeddings ADD COLUMN color_rgb VECTOR(3);
-                END IF;
-            END $$;
-        """)
+        # Add columns if they don't exist (for existing DBs)
+        for col, size in [('color_rgb', 3), ('texture_vector', 32)]:
+            cur.execute(f"""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='image_embeddings' AND column_name='{col}') THEN
+                        ALTER TABLE image_embeddings ADD COLUMN {col} VECTOR({size});
+                    END IF;
+                END $$;
+            """)
         
         cur.close()
         conn.close()
 
-    def save_embedding(self, filename, embedding, color_rgb=None):
-        """Inserts or updates an image embedding and color."""
+    def save_embedding(self, filename, embedding, color_rgb=None, texture_vec=None):
+        """Inserts or updates an image embedding, color, and texture."""
         conn = self.get_connection()
         cur = conn.cursor()
         try:
-            if color_rgb is not None:
-                cur.execute("""
-                    INSERT INTO image_embeddings (filename, embedding, color_rgb)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (filename) DO UPDATE 
-                    SET embedding = EXCLUDED.embedding,
-                        color_rgb = EXCLUDED.color_rgb
-                """, (filename, embedding.tolist(), color_rgb.tolist()))
-            else:
-                cur.execute("""
-                    INSERT INTO image_embeddings (filename, embedding)
-                    VALUES (%s, %s)
-                    ON CONFLICT (filename) DO UPDATE 
-                    SET embedding = EXCLUDED.embedding
-                """, (filename, embedding.tolist()))
+            cur.execute("""
+                INSERT INTO image_embeddings (filename, embedding, color_rgb, texture_vector)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (filename) DO UPDATE 
+                SET embedding = EXCLUDED.embedding,
+                    color_rgb = EXCLUDED.color_rgb,
+                    texture_vector = EXCLUDED.texture_vector
+            """, (
+                filename, 
+                embedding.tolist(), 
+                color_rgb.tolist() if color_rgb is not None else None,
+                texture_vec.tolist() if texture_vec is not None else None
+            ))
             conn.commit()
         finally:
             cur.close()
@@ -115,32 +115,37 @@ class DatabaseManager:
             cur.close()
             conn.close()
 
-    def search_hybrid(self, query_embedding, query_color, color_weight=0.5, limit=12):
+    def search_hybrid(self, query_embedding, query_color, query_texture=None, color_weight=0.3, texture_weight=0.2, limit=12):
         """
-        Performs "Smart Match" hybrid search.
-        Uses Pattern Match as a mandatory baseline and Color as a multiplier/refiner.
+        Performs "Smart Match" hybrid search using Pattern, Color, and Texture.
         """
         conn = self.get_connection()
         cur = conn.cursor()
+        
+        # Ensure weights don't exceed 1.0 (Pattern baseline is at least 0.1)
+        # However, we'll handle the logic such that Pattern is the scale factor.
         
         try:
             cur.execute("""
                 WITH BaseMatches AS (
                     SELECT filename, 
-                           (1 - (embedding <=> %s::vector)) as pattern_score,
-                           (1 - (color_rgb <=> %s::vector)) as color_score
+                           (1 - (embedding <=> %s::vector)) as semantic_score,
+                           (1 - (color_rgb <=> %s::vector)) as color_score,
+                           (1 - (texture_vector <=> %s::vector)) as texture_score
                     FROM image_embeddings
-                    WHERE color_rgb IS NOT NULL
+                    WHERE color_rgb IS NOT NULL AND texture_vector IS NOT NULL
                 )
                 SELECT filename, 
-                       pattern_score * ( (1.0 - %s) + (%s * color_score) ) AS total_similarity,
-                       pattern_score,
-                       color_score
+                       semantic_score * ( (1.0 - %s - %s) + (%s * color_score) + (%s * texture_score) ) AS total_similarity,
+                       semantic_score,
+                       color_score,
+                       texture_score
                 FROM BaseMatches
-                WHERE pattern_score > 0.45 
+                WHERE semantic_score > 0.40 
                 ORDER BY total_similarity DESC
                 LIMIT %s
-            """, (query_embedding, query_color, color_weight, color_weight, limit))
+            """, (query_embedding, query_color, query_texture.tolist() if query_texture is not None else query_color, 
+                  color_weight, texture_weight, color_weight, texture_weight, limit))
             return cur.fetchall()
         finally:
             cur.close()
