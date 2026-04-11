@@ -3,6 +3,9 @@ import pickle
 import numpy as np
 from PIL import Image
 import onnxruntime as ort
+from sklearn.cluster import KMeans
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning) # Clean up KMeans warnings
 
 class CLIPModel:
     def __init__(self, model_path, preprocessor_config):
@@ -58,48 +61,122 @@ class CLIPModel:
         # Transpose to Channel First (C, H, W)
         pixel_values = pixel_values.transpose(2, 0, 1)
         
-        # Add batch dimension
-        return np.expand_dims(pixel_values, axis=0)
+        # Add batch dimension if single image
+        if pixel_values.ndim == 3:
+            return np.expand_dims(pixel_values, axis=0)
+        return pixel_values
 
     def get_embedding(self, image, do_center_crop=True):
         """
-        Takes a PIL Image or path and returns a normalized embedding.
+        Takes a PIL Image, path, or a LIST of images.
+        Returns normalized embeddings.
         """
         if isinstance(image, str):
-            image = Image.open(image)
+            image = [Image.open(image)]
+        elif not isinstance(image, list):
+            image = [image]
             
         try:
-            input_tensor = self.preprocess(image, do_center_crop=do_center_crop)
-            outputs = self.session.run([self.output_name], {self.input_name: input_tensor})
-            embedding = outputs[0]
-            # Normalize embedding for cosine similarity
-            norm = np.linalg.norm(embedding)
-            return embedding / norm if norm > 0 else embedding
+            # Process as batch
+            tensors = []
+            for img in image:
+                tensors.append(self.preprocess(img, do_center_crop=do_center_crop))
+            
+            input_batch = np.concatenate(tensors, axis=0) if len(tensors) > 1 else tensors[0]
+            
+            outputs = self.session.run([self.output_name], {self.input_name: input_batch})
+            embeddings = outputs[0]
+            
+            # Normalize each in batch
+            normalized = []
+            for emb in embeddings:
+                norm = np.linalg.norm(emb)
+                normalized.append(emb / norm if norm > 0 else emb)
+            
+            return np.array(normalized) if len(normalized) > 1 else normalized[0]
         except Exception as e:
             print(f"Error generating embedding: {e}")
             return None
 
+def get_color_distribution(image, k=5):
+    """
+    Extracts k dominant colors and their relative proportions using K-Means.
+    Returns: List of (rgb_vector, proportion)
+    """
+    if isinstance(image, str):
+        img = Image.open(image).convert('RGB')
+    else:
+        img = image.convert('RGB')
+    
+    # Downsample for performance
+    img = img.resize((100, 100), Image.Resampling.LANCZOS)
+    data = np.array(img).reshape(-1, 3)
+    
+    # Perform K-Means
+    kmeans = KMeans(n_clusters=k, n_init='auto', random_state=42)
+    labels = kmeans.fit_predict(data)
+    centers = kmeans.cluster_centers_
+    
+    # Calculate proportions
+    counts = np.bincount(labels, minlength=k)
+    total = len(labels)
+    
+    distribution = []
+    for i in range(len(centers)):
+        if counts[i] > 0:
+            rgb = centers[i] / 255.0 # Normalize 0-1
+            prop = float(counts[i]) / total
+            distribution.append((rgb, prop))
+            
+    # Sort by descending proportion
+    distribution.sort(key=lambda x: x[1], reverse=True)
+    return distribution
+
+def get_image_regions(image):
+    """
+    Slices an image into semantic regions:
+    - Full image
+    - Rule of Thirds (3x3 grid)
+    - 4 Quadrants
+    - Center Focus
+    Returns: List of (region_name, PIL image)
+    """
+    if isinstance(image, str):
+        img = Image.open(image).convert('RGB')
+    else:
+        img = image.convert('RGB')
+    
+    w, h = img.size
+    regions = [("full", img)]
+    
+    # 1. Rule of Thirds (3x3)
+    dw, dh = w // 3, h // 3
+    for row in range(3):
+        for col in range(3):
+            box = (col*dw, row*dh, (col+1)*dw, (row+1)*dh)
+            regions.append((f"third_{row}_{col}", img.crop(box)))
+            
+    # 2. Quadrants (2x2)
+    qw, qh = w // 2, h // 2
+    for row in range(2):
+        for col in range(2):
+            box = (col*qw, row*qh, (col+1)*qw, (row+1)*qh)
+            regions.append((f"quad_{row}_{col}", img.crop(box)))
+            
+    # 3. Center Focus (Standard Golden Ratio style focal area)
+    cw, ch = int(w * 0.618), int(h * 0.618)
+    left = (w - cw) // 2
+    top = (h - ch) // 2
+    regions.append(("center_focus", img.crop((left, top, left+cw, top+ch))))
+    
+    return regions
+
 def get_dominant_color(image_path):
     """
-    Extracts the dominant RGB color from an image.
-    Uses a larger resolution and analyze the whole image for better detail awareness.
+    Legacy compatibility: Extracts the top color from distribution.
     """
-    if isinstance(image_path, str):
-        img = Image.open(image_path).convert('RGB')
-    else:
-        img = image_path.convert('RGB')
-    
-    # 224x224 matches CLIP's resolution and gives enough detail for fine patterns
-    img = img.resize((224, 224), Image.Resampling.LANCZOS)
-    
-    # USE WHOLE IMAGE: Median of the whole image is more robust for crops
-    data = np.array(img)
-    
-    # Calculate median color across height and width
-    median_rgb = np.median(data, axis=(0, 1))
-    
-    # Normalize to 0-1 range for the vector
-    return median_rgb / 255.0
+    dist = get_color_distribution(image_path, k=1)
+    return dist[0][0] if dist else np.array([0.5, 0.5, 0.5])
 
 def get_texture_vector(image_path):
     """
@@ -143,35 +220,61 @@ def cosine_similarity(query_emb, database_embs):
 def create_index(model, images_dir, db_manager, progress_callback=None):
     """
     Synchronizes the images directory with the database.
-    Only processes new images and removes missing ones.
     """
-    # 1. Get current state
     all_files = set(f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')))
     indexed_files = db_manager.get_all_filenames()
     
-    # 2. Identify changes
+    # 2. Identify changes: Missing files AND files needing feature migration
     new_files = list(all_files - indexed_files)
+    migration_files = list(db_manager.get_incomplete_filenames() & all_files)
+    
+    files_to_process = list(set(new_files + migration_files))
     deleted_files = list(indexed_files - all_files)
     
-    # 3. Clean up deleted images
     for f in deleted_files:
         db_manager.delete_embedding(f)
         
-    if not new_files:
-        return True # Nothing to index
+    if not files_to_process:
+        return True
 
-    # 4. Process new images
-    total = len(new_files)
-    for i, f in enumerate(new_files):
-        path = os.path.join(images_dir, f)
-        emb = model.get_embedding(path)
-        color_vec = get_dominant_color(path)
-        texture_vec = get_texture_vector(path)
-        
-        if emb is not None:
-            # Save directly to DB with color and texture
-            db_manager.save_embedding(f, emb.flatten(), color_rgb=color_vec, texture_vec=texture_vec)
-        
+    total = len(files_to_process)
+    for i, f in enumerate(files_to_process):
+        try:
+            path = os.path.join(images_dir, f)
+            img = Image.open(path).convert('RGB')
+            
+            # 1. AI Embeddings (Global + Regions)
+            regions = get_image_regions(img)
+            region_images = [r[1] for r in regions]
+            
+            # Process all regions in one batch call
+            all_embs = model.get_embedding(region_images, do_center_crop=True)
+            
+            global_emb = all_embs[0]
+            region_data = []
+            for idx, (name, _) in enumerate(regions):
+                if name != "full":
+                    region_data.append((name, all_embs[idx]))
+            
+            # 2. Advanced Color Distribution
+            color_dist = get_color_distribution(img, k=5)
+            top_color = color_dist[0][0] # dominant color for backward compatibility
+            
+            # 3. Simple Texture (LBP)
+            texture_vec = get_texture_vector(img)
+            
+            # Save all to DB
+            db_manager.save_embedding(
+                f, 
+                global_emb.flatten(), 
+                color_rgb=top_color, 
+                texture_vec=texture_vec,
+                regions=region_data,
+                color_dist=color_dist
+            )
+        except Exception as e:
+            print(f"Error indexing {f}: {e}")
+            
         if progress_callback:
             progress_callback(i + 1, total)
             

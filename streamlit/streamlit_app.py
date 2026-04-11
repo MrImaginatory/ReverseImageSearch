@@ -3,7 +3,7 @@ import os
 import json
 from PIL import Image
 import numpy as np
-from core import CLIPModel, create_index, get_dominant_color, get_texture_vector
+from core import CLIPModel, create_index, get_color_distribution, get_texture_vector
 from database import DatabaseManager
 
 # Set page config
@@ -105,12 +105,16 @@ if uploaded_file is not None:
         st.subheader("Query Image")
         st.image(query_image, width=400) # Use explicit width or 'stretch'
         
-        # Show extraction preview
-        query_color = get_dominant_color(query_image)
-        st.markdown("**Extracted Dominant Color:**")
-        # Visual color block
-        hex_color = '#%02x%02x%02x' % tuple((query_color * 255).astype(int))
-        st.markdown(f'<div style="background-color:{hex_color}; width:100%; height:40px; border-radius:5px; border:1px solid #ddd;"></div>', unsafe_allow_html=True)
+        # Show extraction preview (Proportional Palette)
+        query_colors = get_color_distribution(query_image, k=5)
+        st.markdown("**Core Color Palette (Top 5):**")
+        
+        palette_html = '<div style="display: flex; width: 100%; height: 40px; border-radius: 5px; overflow: hidden; border: 1px solid #ddd;">'
+        for color, prop in query_colors:
+            hex_c = '#%02x%02x%02x' % tuple((color * 255).astype(int))
+            palette_html += f'<div style="background-color:{hex_c}; width:{prop*100}%; height:100%;" title="{prop:.1%}"></div>'
+        palette_html += '</div>'
+        st.markdown(palette_html, unsafe_allow_html=True)
     
     with col2:
         st.subheader("Results")
@@ -118,11 +122,11 @@ if uploaded_file is not None:
             query_emb = model.get_embedding(query_image, do_center_crop=False)
             
             if query_emb is not None:
-                # Smart Hybrid Search (Pattern mandatory + Color & Texture boost)
+                # Advanced Localized Hybrid Search
                 query_texture = get_texture_vector(query_image)
                 results = db.search_hybrid(
-                    query_emb.flatten(), 
-                    query_color, 
+                    query_emb.flatten() if query_emb.ndim > 1 else query_emb, 
+                    query_colors, 
                     query_texture=query_texture,
                     color_weight=color_boost, 
                     texture_weight=texture_boost,
