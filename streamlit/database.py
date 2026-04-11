@@ -136,7 +136,7 @@ class DatabaseManager:
                     WHERE color_rgb IS NOT NULL AND texture_vector IS NOT NULL
                 )
                 SELECT filename, 
-                       semantic_score * ( (1.0 - %s - %s) + (%s * color_score) + (%s * texture_score) ) AS total_similarity,
+                       ((1.0 - %s - %s) * semantic_score) + (%s * color_score) + (%s * texture_score) AS total_similarity,
                        semantic_score,
                        color_score,
                        texture_score

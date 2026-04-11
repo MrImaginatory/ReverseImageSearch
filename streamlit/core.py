@@ -11,7 +11,7 @@ class CLIPModel:
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
 
-    def preprocess(self, image):
+    def preprocess(self, image, do_center_crop=True):
         """
         Preprocesses a PIL Image object.
         """
@@ -28,13 +28,19 @@ class CLIPModel:
             new_w = int(w * (short_edge / h))
         img = img.resize((new_w, new_h), resample=Image.BICUBIC)
         
-        # Center Crop to 224x224
-        crop_size = self.config.get("crop_size", {"height": 224, "width": 224})
-        left = (new_w - crop_size["width"]) / 2
-        top = (new_h - crop_size["height"]) / 2
-        right = (new_w + crop_size["width"]) / 2
-        bottom = (new_h + crop_size["height"]) / 2
-        img = img.crop((left, top, right, bottom))
+        if do_center_crop:
+            # Center Crop to 224x224
+            crop_size = self.config.get("crop_size", {"height": 224, "width": 224})
+            left = (new_w - crop_size["width"]) / 2
+            top = (new_h - crop_size["height"]) / 2
+            right = (new_w + crop_size["width"]) / 2
+            bottom = (new_h + crop_size["height"]) / 2
+            img = img.crop((left, top, right, bottom))
+        else:
+            # For queries, we want to see the whole image (no crop)
+            # Resize exactly to 224x224 to fit the tensor even if aspect ratio changes slightly
+            # (Standard for detail/crop search)
+            img = img.resize((224, 224), resample=Image.BICUBIC)
         
         # Convert to numpy and normalize
         pixel_values = np.array(img).astype(np.float32)
@@ -55,7 +61,7 @@ class CLIPModel:
         # Add batch dimension
         return np.expand_dims(pixel_values, axis=0)
 
-    def get_embedding(self, image):
+    def get_embedding(self, image, do_center_crop=True):
         """
         Takes a PIL Image or path and returns a normalized embedding.
         """
@@ -63,7 +69,7 @@ class CLIPModel:
             image = Image.open(image)
             
         try:
-            input_tensor = self.preprocess(image)
+            input_tensor = self.preprocess(image, do_center_crop=do_center_crop)
             outputs = self.session.run([self.output_name], {self.input_name: input_tensor})
             embedding = outputs[0]
             # Normalize embedding for cosine similarity
@@ -76,27 +82,18 @@ class CLIPModel:
 def get_dominant_color(image_path):
     """
     Extracts the dominant RGB color from an image.
-    Works by resizing the image to a small scale and calculating the median color.
+    Uses a larger resolution and analyze the whole image for better detail awareness.
     """
     if isinstance(image_path, str):
         img = Image.open(image_path).convert('RGB')
     else:
         img = image_path.convert('RGB')
     
-    # Resize to a small thumbnail to simplify color space
-    # 64x64 is small enough to be fast but maintains enough detail
-    img = img.resize((64, 64), Image.Resampling.LANCZOS)
+    # 224x224 matches CLIP's resolution and gives enough detail for fine patterns
+    img = img.resize((224, 224), Image.Resampling.LANCZOS)
     
-    # We focus more on the center of the image to avoid background pixels (like rugs/walls)
-    width, height = img.size
-    left = width // 4
-    top = height // 4
-    right = 3 * width // 4
-    bottom = 3 * height // 4
-    img_center = img.crop((left, top, right, bottom))
-    
-    # Convert to numpy array
-    data = np.array(img_center)
+    # USE WHOLE IMAGE: Median of the whole image is more robust for crops
+    data = np.array(img)
     
     # Calculate median color across height and width
     median_rgb = np.median(data, axis=(0, 1))
@@ -107,7 +104,7 @@ def get_dominant_color(image_path):
 def get_texture_vector(image_path):
     """
     Extracts a texture descriptor using Local Binary Patterns (LBP).
-    Works by comparing relative intensities in a 3x3 neighborhood.
+    Works on the whole image for consistency across crops.
     Returns a normalized 32-bin histogram as a vector.
     """
     if isinstance(image_path, str):

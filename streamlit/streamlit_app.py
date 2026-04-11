@@ -115,7 +115,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("Results")
         with st.spinner("Executing hybrid search..."):
-            query_emb = model.get_embedding(query_image)
+            query_emb = model.get_embedding(query_image, do_center_crop=False)
             
             if query_emb is not None:
                 # Smart Hybrid Search (Pattern mandatory + Color & Texture boost)
@@ -141,18 +141,19 @@ if uploaded_file is not None:
                     img_path = os.path.join(IMAGES_DIR, name)
                     
                     st.markdown("### 🏆 Founded Product")
-                    if total_score >= 0.85:
+                    if total_score >= 0.75:
                         f_col1, f_col2 = st.columns([1, 1])
                         with f_col1:
                             st.image(img_path, width=400)
                         with f_col2:
                             st.info(f"**Filename:** {name}")
-                            st.metric("Overall Match", f"{total_score:.2%}")
+                            st.metric("Hybrid Match", f"{total_score:.2%}")
+                            st.metric("AI Semantic Match", f"{p_score:.2%}")
                             st.progress(total_score)
-                            st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
+                            st.caption(f"Pattern Score: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
                     else:
-                        st.warning("⚠️ No exact product match found (Score below 85% confidence)")
-                        st.info("Try adjusting the 'Pattern vs Color' slider or check our Similar Products below.")
+                        st.warning("⚠️ No exact product match found (Score below 75% confidence)")
+                        st.info("Try reducing 'Color Boost' or 'Texture Refinement' sliders if you are using a cropped/detailed image.")
 
                     st.markdown("---")
                     
