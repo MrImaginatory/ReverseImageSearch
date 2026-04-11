@@ -98,6 +98,53 @@ class CLIPModel:
             print(f"Error generating embedding: {e}")
             return None
 
+def auto_tune_weights(image):
+    """
+    Analyzes a query image and returns optimal (color_weight, texture_weight, strategy_name).
+    
+    Heuristics:
+    - Crops/details → low color & texture (semantic-first)
+    - Full product shots → moderate color & texture
+    - Color-uniform images → higher color weight
+    """
+    if isinstance(image, str):
+        img = Image.open(image).convert('RGB')
+    else:
+        img = image.convert('RGB')
+    
+    w, h = img.size
+    aspect = max(w, h) / max(min(w, h), 1)
+    
+    # 1. Detect if likely a crop (unusual aspect ratio or small area)
+    is_likely_crop = aspect > 1.8 or (w * h) < 100_000
+    
+    # 2. Analyze color concentration
+    small = img.resize((64, 64), Image.Resampling.LANCZOS)
+    data = np.array(small).reshape(-1, 3).astype(float)
+    color_std = np.mean(np.std(data, axis=0))  # Average std across RGB channels
+    # Low std = uniform color, High std = varied/patterned
+    
+    # 3. Edge density (proxy for detail level)
+    gray = np.array(img.convert('L').resize((128, 128), Image.Resampling.LANCZOS), dtype=float)
+    # Simple Sobel-like edge detection
+    dx = np.abs(gray[:, 1:] - gray[:, :-1])
+    dy = np.abs(gray[1:, :] - gray[:-1, :])
+    edge_density = (np.mean(dx) + np.mean(dy)) / 2.0 / 255.0
+    
+    # Decision logic
+    if is_likely_crop:
+        # Crop detected: rely almost entirely on semantic/region matching
+        return 0.05, 0.05, "🔍 Crop/Detail Mode"
+    elif color_std < 30:
+        # Very uniform color (solid fabric): color is a strong signal
+        return 0.25, 0.10, "🎨 Color-Dominant Mode"
+    elif edge_density > 0.12:
+        # Very textured/patterned image: texture is a strong signal
+        return 0.10, 0.25, "🧵 Pattern-Heavy Mode"
+    else:
+        # Balanced full product shot
+        return 0.15, 0.10, "⚖️ Balanced Mode"
+
 def get_color_distribution(image, k=5):
     """
     Extracts k dominant colors and their relative proportions using K-Means.

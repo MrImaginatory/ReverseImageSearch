@@ -3,7 +3,7 @@ import os
 import json
 from PIL import Image
 import numpy as np
-from core import CLIPModel, create_index, get_color_distribution, get_texture_vector
+from core import CLIPModel, create_index, get_color_distribution, get_texture_vector, auto_tune_weights
 from database import DatabaseManager
 
 # Set page config
@@ -42,37 +42,13 @@ st.sidebar.title("Search Controls")
 total_count = db.get_total_count()
 st.sidebar.info(f"Connected to PostgreSQL. Total images: {total_count}")
 
-# Priority Sliders
-st.sidebar.markdown("### Search Priority")
-color_boost = st.sidebar.slider(
-    "Color Boost",
-    min_value=0.0,
-    max_value=0.5,
-    value=0.2,
-    step=0.05,
-    help="How much color affects the final ranking."
-)
-
-texture_boost = st.sidebar.slider(
-    "Texture/Pattern Refinement",
-    min_value=0.0,
-    max_value=0.5,
-    # default to 0.1 for a nice default balance
-    value=0.15,
-    step=0.05,
-    help="How much surface texture (stripes, dots, etc.) affects the ranking."
-)
-
-total_boost = color_boost + texture_boost
-if total_boost > 0:
-    st.sidebar.caption(f"⚖️ **Hybrid Mode**: Refined by {color_boost:.0%} Color & {texture_boost:.0%} Texture.")
-else:
-    st.sidebar.caption("🎯 Focusing strictly on **Semantic Match**.")
+st.sidebar.markdown("### 🤖 Auto-Tuned Search")
+st.sidebar.caption("The engine automatically detects whether your query is a crop, detail, or full product shot and adjusts search weights accordingly.")
 
 st.sidebar.markdown("---")
 st.sidebar.title("Collection Management")
 if st.sidebar.button("🔄 Update DB Index"):
-    st.sidebar.warning("Processing collection (AI + Color)...")
+    st.sidebar.warning("Processing collection (AI + Regions + Colors)...")
     progress_bar = st.sidebar.progress(0)
     status_text = st.sidebar.empty()
     
@@ -103,7 +79,14 @@ if uploaded_file is not None:
     
     with col1:
         st.subheader("Query Image")
-        st.image(query_image, width=400) # Use explicit width or 'stretch'
+        st.image(query_image, width=400)
+        
+        # Auto-tune weights based on image analysis
+        color_boost, texture_boost, strategy = auto_tune_weights(query_image)
+        
+        # Show detected strategy
+        st.markdown(f"**Strategy:** {strategy}")
+        st.caption(f"Color: {color_boost:.0%} | Texture: {texture_boost:.0%} | Semantic: {1 - color_boost - texture_boost:.0%}")
         
         # Show extraction preview (Proportional Palette)
         query_colors = get_color_distribution(query_image, k=5)
@@ -122,7 +105,7 @@ if uploaded_file is not None:
             query_emb = model.get_embedding(query_image, do_center_crop=False)
             
             if query_emb is not None:
-                # Advanced Localized Hybrid Search
+                # Advanced Localized Hybrid Search with auto-tuned weights
                 query_texture = get_texture_vector(query_image)
                 results = db.search_hybrid(
                     query_emb.flatten() if query_emb.ndim > 1 else query_emb, 
@@ -140,7 +123,7 @@ if uploaded_file is not None:
                     
                     st.success(f"Matched {len(results)} items using Hybrid Ranking")
                     
-                    # 1. Display Founded Product (85% confidence threshold)
+                    # 1. Display Founded Product
                     name, total_score, p_score, c_score, t_score = top_result
                     img_path = os.path.join(IMAGES_DIR, name)
                     
@@ -154,17 +137,17 @@ if uploaded_file is not None:
                             st.metric("Hybrid Match", f"{total_score:.2%}")
                             st.metric("AI Semantic Match", f"{p_score:.2%}")
                             st.progress(total_score)
-                            st.caption(f"Pattern Score: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
+                            st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
                     else:
                         st.warning("⚠️ No exact product match found (Score below 75% confidence)")
-                        st.info("Try reducing 'Color Boost' or 'Texture Refinement' sliders if you are using a cropped/detailed image.")
+                        st.info("The uploaded image may not exist in the collection, or it may be too abstract to match reliably.")
 
                     st.markdown("---")
                     
                     # 2. Display Similar Products (Max 5)
                     if other_results:
                         st.markdown("### 🔍 Similar Products")
-                        other_results = other_results[:5] # Enforce max 5
+                        other_results = other_results[:5]
                         cols = st.columns(3)
                         for i, (name, total_score, p_score, c_score, t_score) in enumerate(other_results):
                             with cols[i % 3]:
