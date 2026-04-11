@@ -145,6 +145,50 @@ def auto_tune_weights(image):
         # Balanced full product shot
         return 0.15, 0.10, "⚖️ Balanced Mode"
 
+def extract_foreground(image):
+    """
+    Detects and removes transparent or white backgrounds.
+    Returns a cropped image containing only the foreground subject.
+    """
+    if isinstance(image, str):
+        img = Image.open(image)
+    else:
+        img = image.copy()
+    
+    # 1. Check for alpha channel (transparent background - e.g., from rembg)
+    if img.mode == 'RGBA':
+        alpha = np.array(img)[:, :, 3]
+        transparent_ratio = np.mean(alpha < 128)
+        if transparent_ratio > 0.05:  # More than 5% transparent
+            mask = alpha > 128
+            rows = np.any(mask, axis=1)
+            cols = np.any(mask, axis=0)
+            if np.any(rows) and np.any(cols):
+                rmin, rmax = np.where(rows)[0][[0, -1]]
+                cmin, cmax = np.where(cols)[0][[0, -1]]
+                # Crop to foreground bounding box and convert to RGB
+                cropped = img.crop((cmin, rmin, cmax + 1, rmax + 1))
+                # Paste onto white to avoid transparency issues with CLIP
+                bg = Image.new('RGB', cropped.size, (255, 255, 255))
+                bg.paste(cropped, mask=cropped.split()[3])
+                return bg
+    
+    # 2. Check for white/near-white background
+    rgb = np.array(img.convert('RGB'))
+    is_bg = np.all(rgb > 240, axis=2)  # Near-white pixels
+    bg_ratio = np.mean(is_bg)
+    
+    if bg_ratio > 0.15:  # More than 15% white background
+        mask = ~is_bg
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+        if np.any(rows) and np.any(cols):
+            rmin, rmax = np.where(rows)[0][[0, -1]]
+            cmin, cmax = np.where(cols)[0][[0, -1]]
+            return img.convert('RGB').crop((cmin, rmin, cmax + 1, rmax + 1))
+    
+    return img.convert('RGB')
+
 def get_color_distribution(image, k=5):
     """
     Extracts k dominant colors and their relative proportions using K-Means.

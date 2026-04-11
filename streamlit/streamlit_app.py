@@ -3,7 +3,7 @@ import os
 import json
 from PIL import Image
 import numpy as np
-from core import CLIPModel, create_index, get_color_distribution, get_texture_vector, auto_tune_weights
+from core import CLIPModel, create_index, get_color_distribution, get_texture_vector, auto_tune_weights, extract_foreground
 from database import DatabaseManager
 
 # Set page config
@@ -75,21 +75,24 @@ uploaded_file = st.file_uploader("Choose a query image...", type=["jpg", "jpeg",
 if uploaded_file is not None:
     query_image = Image.open(uploaded_file)
     
+    # Extract foreground (strip transparent/white backgrounds)
+    query_fg = extract_foreground(query_image)
+    
     col1, col2 = st.columns([1, 2])
     
     with col1:
         st.subheader("Query Image")
         st.image(query_image, width=400)
         
-        # Auto-tune weights based on image analysis
-        color_boost, texture_boost, strategy = auto_tune_weights(query_image)
+        # Auto-tune weights based on foreground analysis
+        color_boost, texture_boost, strategy = auto_tune_weights(query_fg)
         
         # Show detected strategy
         st.markdown(f"**Strategy:** {strategy}")
         st.caption(f"Color: {color_boost:.0%} | Texture: {texture_boost:.0%} | Semantic: {1 - color_boost - texture_boost:.0%}")
         
-        # Show extraction preview (Proportional Palette)
-        query_colors = get_color_distribution(query_image, k=5)
+        # Color palette from foreground only
+        query_colors = get_color_distribution(query_fg, k=5)
         st.markdown("**Core Color Palette (Top 5):**")
         
         palette_html = '<div style="display: flex; width: 100%; height: 40px; border-radius: 5px; overflow: hidden; border: 1px solid #ddd;">'
@@ -102,11 +105,11 @@ if uploaded_file is not None:
     with col2:
         st.subheader("Results")
         with st.spinner("Executing hybrid search..."):
-            query_emb = model.get_embedding(query_image, do_center_crop=False)
+            query_emb = model.get_embedding(query_fg, do_center_crop=False)
             
             if query_emb is not None:
                 # Advanced Localized Hybrid Search with auto-tuned weights
-                query_texture = get_texture_vector(query_image)
+                query_texture = get_texture_vector(query_fg)
                 results = db.search_hybrid(
                     query_emb.flatten() if query_emb.ndim > 1 else query_emb, 
                     query_colors, 
