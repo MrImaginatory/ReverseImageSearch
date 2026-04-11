@@ -7,12 +7,12 @@ from app.db.session import get_db
 from app.crud.image_crud import ImageCRUD
 from app.services.clip_service import CLIPService, get_clip_service
 from app.services.image_service import ImageService
-from app.schemas.image import SearchResult
+from app.schemas.image import SearchResult, SearchResponse
 from typing import List
 
 router = APIRouter()
 
-@router.post("/", response_model=List[SearchResult])
+@router.post("/", response_model=SearchResponse)
 async def search_image(
     file: UploadFile = File(...),
     limit: int = Form(6),
@@ -25,13 +25,15 @@ async def search_image(
     """
     # 1. Load and process image
     contents = await file.read()
-    query_image = Image.open(io.BytesIO(contents)).convert("RGB")
+    # DO NOT convert to RGB yet, keep original mode (e.g. RGBA) for foreground extraction
+    query_image = Image.open(io.BytesIO(contents))
     
-    # Foreground extraction
+    # Foreground extraction (handles RGBA and near-white backgrounds)
     query_fg = ImageService.extract_foreground(query_image)
     
     # 2. Auto-tune weights
     color_boost, texture_boost, strategy = ImageService.auto_tune_weights(query_fg)
+    semantic_weight = 1.0 - color_boost - texture_boost
     
     # 3. Feature Extraction
     query_emb = clip.get_embedding(query_fg, do_center_crop=False)
@@ -39,7 +41,13 @@ async def search_image(
     query_texture = ImageService.get_texture_vector(query_fg)
     
     if query_emb is None:
-        return []
+        return SearchResponse(
+            results=[],
+            strategy=strategy,
+            color_weight=color_boost,
+            texture_weight=texture_boost,
+            semantic_weight=semantic_weight
+        )
 
     # 4. Search
     results = await ImageCRUD.search_hybrid(
@@ -53,7 +61,6 @@ async def search_image(
     )
     
     # 5. Format results
-    # Each row: (filename, total_similarity, semantic_score, color_dist_score, texture_score)
     formatted_results = []
     for row in results:
         formatted_results.append({
@@ -64,4 +71,10 @@ async def search_image(
             "texture_score": float(row[4])
         })
         
-    return formatted_results
+    return SearchResponse(
+        results=formatted_results,
+        strategy=strategy,
+        color_weight=color_boost,
+        texture_weight=texture_boost,
+        semantic_weight=semantic_weight
+    )

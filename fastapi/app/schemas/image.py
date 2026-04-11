@@ -8,6 +8,13 @@ class SearchResult(BaseModel):
     color_dist_score: float
     texture_score: float
 
+class SearchResponse(BaseModel):
+    results: List[SearchResult]
+    strategy: str
+    color_weight: float
+    texture_weight: float
+    semantic_weight: float
+
 class IndexStatus(BaseModel):
     status: str
     processed: int

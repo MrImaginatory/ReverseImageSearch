@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 
 from app.api.v1.endpoints import search, index
@@ -13,6 +14,10 @@ app = FastAPI(
 # Include Routers
 app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["Search"])
 app.include_router(index.router, prefix=f"{settings.API_V1_STR}/index", tags=["Index"])
+
+# Mount Static Files
+app.mount("/images", StaticFiles(directory=settings.IMAGES_DIR), name="images")
+app.mount("/ui", StaticFiles(directory="web", html=True), name="web")
 
 # Set all CORS enabled origins
 if settings.BACKEND_CORS_ORIGINS:

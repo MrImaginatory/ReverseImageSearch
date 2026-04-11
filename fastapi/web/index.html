@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Hybrid Search | AI-Powered Image Discovery</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body class="dark-mode">
+    <nav class="navbar">
+        <div class="logo">
+            <span class="logo-icon">⚡</span>
+            <span class="logo-text">HYBRID<span>SEARCH</span></span>
+        </div>
+        <div class="nav-actions">
+            <button id="sync-btn" class="btn btn-secondary">
+                <span class="icon">🔄</span> Sync Index
+            </button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section class="hero">
+            <h1>Discover Images with <span class="gradient-text">Hybrid AI</span></h1>
+            <p>Upload an image to perform a deep semantic, color, and texture search across your collection.</p>
+            
+            <div class="upload-area" id="drop-zone">
+                <input type="file" id="file-input" accept="image/*" hidden>
+                <div class="upload-content">
+                    <div class="upload-icon">📸</div>
+                    <h3>Drag & Drop or Click to Upload</h3>
+                    <p>PNG, JPG, WebP (Max 10MB)</p>
+                </div>
+                <div id="preview-container" class="preview-container hidden">
+                    <img id="image-preview" src="" alt="Preview">
+                    <div class="preview-overlay">
+                        <button id="clear-search" class="btn btn-circle">✕</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label for="limit-select">Results to show:</label>
+                    <select id="limit-select" class="form-select">
+                        <option value="6">6 Results</option>
+                        <option value="12" selected>12 Results</option>
+                        <option value="24">24 Results</option>
+                        <option value="48">48 Results</option>
+                    </select>
+                </div>
+                <button id="search-btn" class="btn btn-primary" disabled>
+                    Start Search
+                </button>
+            </div>
+        </section>
+
+        <section id="results-section" class="results-section hidden">
+            <div class="section-header">
+                <h2>Search Results</h2>
+                <div id="status-bar" class="status-bar"></div>
+            </div>
+
+            <!-- Search Strategy Dashboard -->
+            <div id="strategy-dashboard" class="glass-card" style="display: none; margin-bottom: 2rem; padding: 1.5rem; border-left: 4px solid var(--accent-primary);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 id="strategy-name" style="margin: 0; color: var(--accent-primary); font-size: 1.2rem;">🔍 Detecting Strategy...</h3>
+                        <p style="margin: 0.5rem 0 0 0; opacity: 0.7; font-size: 0.9rem;">Adaptive Search Engine Heuristics</p>
+                    </div>
+                    <div id="strategy-weights" style="display: flex; gap: 1.5rem; font-size: 0.85rem; font-weight: 600;">
+                        <!-- Weights will be injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="results-grid" class="results-grid"></div>
+        </section>
+
+        <template id="result-template">
+            <div class="result-card glass-card">
+                <div class="confidence-badge" style="display: none;">🏆 HIGH CONFIDENCE MATCH</div>
+                <div class="card-img-wrapper">
+                    <img class="result-image" src="" alt="Search result">
+                    <div class="match-badge">0% Match</div>
+                </div>
+                <div class="card-content">
+                    <div class="score-row">
+                        <span class="score-main">0%</span>
+                        <span class="file-name">image.jpg</span>
+                    </div>
+                    <div class="score-breakdown">
+                        <div class="score-item">
+                            <span class="score-label">AI</span>
+                            <div class="score-bar-bg"><div class="score-bar-fill ai-fill"></div></div>
+                            <span class="score-value">0%</span>
+                        </div>
+                        <div class="score-item">
+                            <span class="score-label">Color</span>
+                            <div class="score-bar-bg"><div class="score-bar-fill color-fill"></div></div>
+                            <span class="score-value">0%</span>
+                        </div>
+                        <div class="score-item">
+                            <span class="score-label">Pattern</span>
+                            <div class="score-bar-bg"><div class="score-bar-fill texture-fill"></div></div>
+                            <span class="score-value">0%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <section id="loader" class="loader hidden">
+            <div class="spinner"></div>
+            <p>Analyzing features and searching...</p>
+        </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
