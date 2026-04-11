@@ -9,7 +9,9 @@ class SearchResult(BaseModel):
     texture_score: float
 
 class SearchResponse(BaseModel):
-    results: List[SearchResult]
+    status: str
+    highconfidence: Optional[SearchResult] = None
+    silimar: List[SearchResult] = []
     strategy: str
     color_weight: float
     texture_weight: float

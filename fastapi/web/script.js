@@ -105,12 +105,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function renderResults(data) {
-        const { results, strategy, color_weight, texture_weight, semantic_weight } = data;
+        const { status, highconfidence, silimar, strategy, color_weight, texture_weight, semantic_weight } = data;
         const strategyDashboard = document.getElementById('strategy-dashboard');
         const strategyName = document.getElementById('strategy-name');
         const strategyWeights = document.getElementById('strategy-weights');
 
-        if (results.length === 0) {
+        if (!highconfidence && (!silimar || silimar.length === 0)) {
             statusBar.innerHTML = 'No matches found.';
             strategyDashboard.style.display = 'none';
             resultsSection.classList.remove('hidden');
@@ -126,26 +126,21 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         strategyDashboard.style.display = 'block';
 
-        statusBar.innerHTML = `Matched ${results.length} items using Hybrid Ranking`;
+        statusBar.innerHTML = `Search analyzed using ${strategy}`;
         resultsGrid.innerHTML = '';
-        
-        results.forEach((item, index) => {
+
+        // Helper to create card
+        const createCard = (item, isHighConf = false) => {
             const card = document.createElement('div');
-            
-            // Score formatting
             const totalScoreRaw = item.total_similarity * 100;
             const totalScore = totalScoreRaw.toFixed(1);
             const semanticScore = (item.semantic_score * 100).toFixed(0);
             const colorScore = (item.color_dist_score * 100).toFixed(0);
             const textureScore = (item.texture_score * 100).toFixed(0);
 
-            // Confidence logic (Matches Streamlit thresholds)
-            const isHighConfidence = index === 0 && totalScoreRaw >= 82 && (item.semantic_score * 100) >= 81;
-            
-            card.className = `result-card glass-card ${isHighConfidence ? 'high-confidence' : ''}`;
-            
+            card.className = `result-card glass-card ${isHighConf ? 'high-confidence' : ''}`;
             card.innerHTML = `
-                ${isHighConfidence ? '<div class="confidence-badge">🏆 HIGH CONFIDENCE MATCH</div>' : ''}
+                ${isHighConf ? '<div class="confidence-badge">🏆 HIGH CONFIDENCE MATCH</div>' : ''}
                 <div class="card-img-wrapper">
                     <img src="/images/${item.filename}" alt="${item.filename}" loading="lazy">
                     <div class="match-badge">${totalScore}% Match</div>
@@ -174,8 +169,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
             `;
-            resultsGrid.appendChild(card);
-        });
+            return card;
+        };
+
+        // Render High Confidence Match
+        if (highconfidence) {
+            const sectionTitle = document.createElement('h3');
+            sectionTitle.className = 'grid-group-title';
+            sectionTitle.innerHTML = '🎯 Founded Match';
+            sectionTitle.style.gridColumn = '1 / -1';
+            sectionTitle.style.marginTop = '0';
+            resultsGrid.appendChild(sectionTitle);
+            
+            resultsGrid.appendChild(createCard(highconfidence, true));
+        }
+
+        // Render Similar Items
+        if (silimar && silimar.length > 0) {
+            const sectionTitle = document.createElement('h3');
+            sectionTitle.className = 'grid-group-title';
+            sectionTitle.innerHTML = '✨ Similar Items';
+            sectionTitle.style.gridColumn = '1 / -1';
+            sectionTitle.style.marginTop = highconfidence ? '3rem' : '0';
+            resultsGrid.appendChild(sectionTitle);
+
+            silimar.forEach(item => {
+                resultsGrid.appendChild(createCard(item, false));
+            });
+        }
 
         resultsSection.classList.remove('hidden');
         resultsSection.scrollIntoView({ behavior: 'smooth' });

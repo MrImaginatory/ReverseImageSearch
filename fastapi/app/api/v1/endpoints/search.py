@@ -40,39 +40,42 @@ async def search_image(
     query_colors = ImageService.get_color_distribution(query_fg, k=5)
     query_texture = ImageService.get_texture_vector(query_fg)
     
-    if query_emb is None:
-        return SearchResponse(
-            results=[],
-            strategy=strategy,
-            color_weight=color_boost,
-            texture_weight=texture_boost,
-            semantic_weight=semantic_weight
-        )
-
     # 4. Search
-    results = await ImageCRUD.search_hybrid(
+    db_results = await ImageCRUD.search_hybrid(
         db=db,
         query_embedding=query_emb,
-        query_color=query_colors[0][0], # Using top color
+        query_color=query_colors[0][0],
         query_texture=query_texture,
         color_weight=color_boost,
         texture_weight=texture_boost,
         limit=limit
     )
     
-    # 5. Format results
-    formatted_results = []
-    for row in results:
-        formatted_results.append({
-            "filename": row[0],
-            "total_similarity": float(row[1]),
-            "semantic_score": float(row[2]),
-            "color_dist_score": float(row[3]),
-            "texture_score": float(row[4])
-        })
+    # 5. Format and Split Results
+    all_results = []
+    for row in db_results:
+        all_results.append(SearchResult(
+            filename=row[0],
+            total_similarity=float(row[1]),
+            semantic_score=float(row[2]),
+            color_dist_score=float(row[3]),
+            texture_score=float(row[4])
+        ))
         
+    high_conf = None
+    similar_list = all_results
+    
+    if all_results:
+        top = all_results[0]
+        # High Confidence Threshold: Match >= 82% and AI >= 81%
+        if top.total_similarity >= 0.82 and top.semantic_score >= 0.81:
+            high_conf = top
+            similar_list = all_results[1:]
+            
     return SearchResponse(
-        results=formatted_results,
+        status="success",
+        highconfidence=high_conf,
+        silimar=similar_list,
         strategy=strategy,
         color_weight=color_boost,
         texture_weight=texture_boost,
