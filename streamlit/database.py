@@ -3,7 +3,7 @@ from pgvector.psycopg2 import register_vector
 import numpy as np
 
 class DatabaseManager:
-    def __init__(self, host="localhost", port=5433, user="postgres", password="root", dbname="clip_search"):
+    def __init__(self, host="localhost", port=5433, user="postgres", password="root", dbname="clip_vector_db"):
         self.conn_params = {
             "host": host,
             "port": port,
