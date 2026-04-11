@@ -1,0 +1,12 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+sqlalchemy==2.0.31
+asyncpg==0.29.0
+pgvector==0.2.5
+pillow==10.3.0
+numpy==1.26.4
+onnxruntime==1.18.0
+scikit-learn==1.5.0
+python-dotenv==1.0.1
+python-multipart==0.0.9
+httpx==0.27.0
