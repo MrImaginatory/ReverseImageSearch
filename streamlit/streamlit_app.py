@@ -128,7 +128,7 @@ if uploaded_file is not None:
                     img_path = os.path.join(IMAGES_DIR, name)
                     
                     st.markdown("### 🏆 Founded Product")
-                    if total_score >= 0.75:
+                    if total_score >= 0.82 and p_score >= 0.81:
                         f_col1, f_col2 = st.columns([1, 1])
                         with f_col1:
                             st.image(img_path, width=400)
