@@ -129,3 +129,21 @@ class ImageService:
         regions.append(("center_focus", img.crop((left, top, left+cw, top+ch))))
         
         return regions
+
+    @staticmethod
+    def calibrate_confidence(similarity: float, power: float = 8.0) -> float:
+        """
+        Calibrates raw cosine similarity into a human-intuitive confidence score.
+        Uses a power-law transformation to penalize non-exact matches.
+        """
+        s = max(0.0, min(1.0, similarity))
+        return float(s ** power)
+
+    @staticmethod
+    def get_confidence_label(calibrated_score: float) -> str:
+        """Categorizes calibrated scores into human-readable labels."""
+        if calibrated_score >= 0.98: return "💎 Exact Match"
+        if calibrated_score >= 0.85: return "🎯 High Confidence"
+        if calibrated_score >= 0.70: return "🔍 Very Similar"
+        if calibrated_score >= 0.40: return "🎨 Visual Idea"
+        return "🌐 Related Style"

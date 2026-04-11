@@ -25,10 +25,9 @@ async def search_image(
     """
     # 1. Load and process image
     contents = await file.read()
-    # DO NOT convert to RGB yet, keep original mode (e.g. RGBA) for foreground extraction
     query_image = Image.open(io.BytesIO(contents))
     
-    # Foreground extraction (handles RGBA and near-white backgrounds)
+    # Foreground extraction
     query_fg = ImageService.extract_foreground(query_image)
     
     # 2. Auto-tune weights
@@ -54,12 +53,18 @@ async def search_image(
     # 5. Format and Split Results
     all_results = []
     for row in db_results:
+        raw_sim = float(row[1])
+        calibrated_sim = ImageService.calibrate_confidence(raw_sim)
+        label = ImageService.get_confidence_label(calibrated_sim)
+        
         all_results.append(SearchResult(
             filename=row[0],
-            total_similarity=float(row[1]),
-            semantic_score=float(row[2]),
-            color_dist_score=float(row[3]),
-            texture_score=float(row[4])
+            total_similarity=calibrated_sim,
+            # We calibrate individual scores for visual consistency
+            semantic_score=ImageService.calibrate_confidence(float(row[2])),
+            color_dist_score=ImageService.calibrate_confidence(float(row[3])),
+            texture_score=ImageService.calibrate_confidence(float(row[4])),
+            confidence_label=label
         ))
         
     high_conf = None
@@ -67,8 +72,8 @@ async def search_image(
     
     if all_results:
         top = all_results[0]
-        # High Confidence Threshold: Match >= 82% and AI >= 81%
-        if top.total_similarity >= 0.82 and top.semantic_score >= 0.81:
+        # High Confidence Threshold: Match >= 85% in calibrated space
+        if top.total_similarity >= 0.85:
             high_conf = top
             similar_list = all_results[1:]
             

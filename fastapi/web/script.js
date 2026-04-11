@@ -1,22 +1,23 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- Selectors ---
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
     const previewContainer = document.getElementById('preview-container');
     const imagePreview = document.getElementById('image-preview');
     const clearSearch = document.getElementById('clear-search');
     const searchBtn = document.getElementById('search-btn');
-    const limitSelect = document.getElementById('limit-select');
+    const syncBtn = document.getElementById('sync-btn');
+    
     const resultsSection = document.getElementById('results-section');
+    const resultsPlaceholder = document.getElementById('results-placeholder');
     const resultsGrid = document.getElementById('results-grid');
     const loader = document.getElementById('loader');
-    const syncBtn = document.getElementById('sync-btn');
-    const statusBar = document.getElementById('status-bar');
+    
     const toast = document.getElementById('toast');
 
     let selectedFile = null;
 
     // --- Upload Logic ---
-
     dropZone.addEventListener('click', () => fileInput.click());
 
     dropZone.addEventListener('dragover', (e) => {
@@ -65,25 +66,25 @@ document.addEventListener('DOMContentLoaded', () => {
         previewContainer.classList.add('hidden');
         document.querySelector('.upload-content').classList.remove('hidden');
         searchBtn.disabled = true;
+        
         resultsSection.classList.add('hidden');
+        resultsPlaceholder.classList.remove('hidden');
         resultsGrid.innerHTML = '';
-        statusBar.innerHTML = '';
     }
 
     // --- Search Logic ---
-
     searchBtn.addEventListener('click', async () => {
         if (!selectedFile) return;
 
         // UI State
-        loader.classList.remove('hidden');
+        resultsPlaceholder.classList.add('hidden');
         resultsSection.classList.add('hidden');
+        loader.classList.remove('hidden');
         searchBtn.disabled = true;
-        resultsGrid.innerHTML = '';
-
+        
         const formData = new FormData();
         formData.append('file', selectedFile);
-        formData.append('limit', limitSelect.value);
+        formData.append('limit', 6);
 
         try {
             const response = await fetch('/api/v1/search/', {
@@ -98,6 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error(error);
             showToast('Search failed. Please try again.', 'error');
+            resultsPlaceholder.classList.remove('hidden');
         } finally {
             loader.classList.add('hidden');
             searchBtn.disabled = false;
@@ -105,67 +107,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function renderResults(data) {
-        const { status, highconfidence, silimar, strategy, color_weight, texture_weight, semantic_weight } = data;
-        const strategyDashboard = document.getElementById('strategy-dashboard');
-        const strategyName = document.getElementById('strategy-name');
-        const strategyWeights = document.getElementById('strategy-weights');
+        const { status, highconfidence, silimar } = data;
 
         if (!highconfidence && (!silimar || silimar.length === 0)) {
-            statusBar.innerHTML = 'No matches found.';
-            strategyDashboard.style.display = 'none';
-            resultsSection.classList.remove('hidden');
+            showToast('No matches found in the collection.', 'error');
+            resultsPlaceholder.classList.remove('hidden');
             return;
         }
 
-        // --- Update Strategy Dashboard ---
-        strategyName.textContent = strategy;
-        strategyWeights.innerHTML = `
-            <div class="strategy-tag">AI: ${(semantic_weight * 100).toFixed(0)}%</div>
-            <div class="strategy-tag">Color: ${(color_weight * 100).toFixed(0)}%</div>
-            <div class="strategy-tag">Pattern: ${(texture_weight * 100).toFixed(0)}%</div>
-        `;
-        strategyDashboard.style.display = 'block';
-
-        statusBar.innerHTML = `Search analyzed using ${strategy}`;
         resultsGrid.innerHTML = '';
 
-        // Helper to create card
+        // Helper to create card matching new CSS card structure
         const createCard = (item, isHighConf = false) => {
-            const card = document.createElement('div');
-            const totalScoreRaw = item.total_similarity * 100;
-            const totalScore = totalScoreRaw.toFixed(1);
-            const semanticScore = (item.semantic_score * 100).toFixed(0);
-            const colorScore = (item.color_dist_score * 100).toFixed(0);
-            const textureScore = (item.texture_score * 100).toFixed(0);
+            const card = document.createElement('a');
+            card.href = `/images/${item.filename}`;
+            card.target = '_blank';
+            card.className = `result-card fade-in ${isHighConf ? 'high-confidence' : ''}`;
+            card.style.textDecoration = 'none';
+            card.style.color = 'inherit';
+            
+            const totalScore = (item.total_similarity * 100).toFixed(1);
 
-            card.className = `result-card glass-card ${isHighConf ? 'high-confidence' : ''}`;
             card.innerHTML = `
-                ${isHighConf ? '<div class="confidence-badge">🏆 HIGH CONFIDENCE MATCH</div>' : ''}
+                <div class="match-badge">${totalScore}% Match</div>
                 <div class="card-img-wrapper">
                     <img src="/images/${item.filename}" alt="${item.filename}" loading="lazy">
-                    <div class="match-badge">${totalScore}% Match</div>
                 </div>
                 <div class="card-content">
-                    <div class="score-row">
-                        <span class="score-main">${totalScore}%</span>
-                        <span class="file-name" title="${item.filename}">${item.filename.substring(0, 15)}...</span>
-                    </div>
-                    <div class="score-breakdown">
-                        <div class="score-item">
-                            <span class="score-label">AI</span>
-                            <div class="score-bar-bg"><div class="score-bar-fill ai-fill" style="width: ${semanticScore}%"></div></div>
-                            <span class="score-value">${semanticScore}%</span>
-                        </div>
-                        <div class="score-item">
-                            <span class="score-label">Color</span>
-                            <div class="score-bar-bg"><div class="score-bar-fill color-fill" style="width: ${colorScore}%"></div></div>
-                            <span class="score-value">${colorScore}%</span>
-                        </div>
-                        <div class="score-item">
-                            <span class="score-label">Pattern</span>
-                            <div class="score-bar-bg"><div class="score-bar-fill texture-fill" style="width: ${textureScore}%"></div></div>
-                            <span class="score-value">${textureScore}%</span>
-                        </div>
+                    <div class="card-header">
+                        <span class="card-filename" title="${item.filename}">${item.filename}</span>
+                        <span class="confidence-marker">${item.confidence_label || (isHighConf ? '🎯 Exact' : 'Similar')}</span>
                     </div>
                 </div>
             `;
@@ -174,24 +145,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Render High Confidence Match
         if (highconfidence) {
-            const sectionTitle = document.createElement('h3');
-            sectionTitle.className = 'grid-group-title';
-            sectionTitle.innerHTML = '🎯 Founded Match';
-            sectionTitle.style.gridColumn = '1 / -1';
-            sectionTitle.style.marginTop = '0';
-            resultsGrid.appendChild(sectionTitle);
+            const groupTitle = document.createElement('h3');
+            groupTitle.className = 'grid-group-title';
+            groupTitle.textContent = 'Founded Match';
+            resultsGrid.appendChild(groupTitle);
             
             resultsGrid.appendChild(createCard(highconfidence, true));
         }
 
         // Render Similar Items
         if (silimar && silimar.length > 0) {
-            const sectionTitle = document.createElement('h3');
-            sectionTitle.className = 'grid-group-title';
-            sectionTitle.innerHTML = '✨ Similar Items';
-            sectionTitle.style.gridColumn = '1 / -1';
-            sectionTitle.style.marginTop = highconfidence ? '3rem' : '0';
-            resultsGrid.appendChild(sectionTitle);
+            const groupTitle = document.createElement('h3');
+            groupTitle.className = 'grid-group-title';
+            groupTitle.textContent = 'Similar Collection Items';
+            groupTitle.style.marginTop = highconfidence ? '2rem' : '0';
+            resultsGrid.appendChild(groupTitle);
 
             silimar.forEach(item => {
                 resultsGrid.appendChild(createCard(item, false));
@@ -199,23 +167,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         resultsSection.classList.remove('hidden');
-        resultsSection.scrollIntoView({ behavior: 'smooth' });
+        if (window.lucide) {
+            lucide.createIcons();
+        }
     }
 
     // --- Sync Logic ---
-
     syncBtn.addEventListener('click', async () => {
         const originalText = syncBtn.innerHTML;
         syncBtn.disabled = true;
-        syncBtn.innerHTML = '<span class="spinner-small"></span> Syncing...';
+        syncBtn.innerHTML = '<span><div class="spinner-small"></div></span> Syncing...';
 
         try {
             const response = await fetch('/api/v1/index/sync', { method: 'POST' });
+            if (!response.ok) throw new Error('Sync failed');
             const data = await response.json();
             
             showToast(`Sync ${data.status}! Processed ${data.processed} new images.`, 'success');
         } catch (error) {
-            showToast('Sync failed', 'error');
+            console.error(error);
+            showToast('Index synchronization failed', 'error');
         } finally {
             syncBtn.disabled = false;
             syncBtn.innerHTML = originalText;
@@ -223,7 +194,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Utils ---
-
     function showToast(message, type = '') {
         toast.textContent = message;
         toast.className = `toast ${type}`;

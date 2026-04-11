@@ -7,6 +7,7 @@ class SearchResult(BaseModel):
     semantic_score: float
     color_dist_score: float
     texture_score: float
+    confidence_label: Optional[str] = None
 
 class SearchResponse(BaseModel):
     status: str
