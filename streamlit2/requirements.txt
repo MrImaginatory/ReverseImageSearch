@@ -1,0 +1,13 @@
+onnxruntime
+numpy
+pillow
+tqdm
+pickle-mixin
+streamlit
+psycopg2-binary
+pgvector
+scikit-learn
+transformers 
+torch 
+torchvision 
+torchaudio
