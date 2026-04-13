@@ -5,6 +5,7 @@ from PIL import Image
 import torch
 from transformers import CLIPProcessor, CLIPModel as HFCLIPModel
 from sklearn.cluster import KMeans
+import imagehash
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning) # Clean up KMeans warnings
 
@@ -263,13 +264,55 @@ def get_texture_vector(image_path):
         neighbor = data_pad[1+dy : 1+dy+data.shape[0], 1+dx : 1+dx+data.shape[1]]
         lbp += (neighbor >= data).astype(np.uint16) * (2**i)
     
-    # Create histogram and reduce to 32 bins for efficiency
-    hist, _ = np.histogram(lbp, bins=32, range=(0, 255))
+    # Create histogram and reduce to 64 bins for better detail
+    hist, _ = np.histogram(lbp, bins=64, range=(0, 255))
     
     # Normalize for cosine similarity
     hist = hist.astype(np.float32)
     norm = np.linalg.norm(hist)
     return hist / norm if norm > 0 else hist
+
+def get_edge_histogram(image):
+    """
+    Extracts Edge Orientation Histogram for shape matching.
+    """
+    if isinstance(image, str):
+        img = Image.open(image).convert('L')
+    else:
+        img = image.convert('L')
+    
+    img = img.resize((128, 128), Image.Resampling.LANCZOS)
+    data = np.array(img, dtype=float)
+    
+    # Sobel filters
+    dx = data[:, 2:] - data[:, :-2]
+    dx = dx[1:-1, :]
+    dy = data[2:, :] - data[:-2, :]
+    dy = dy[:, 1:-1]
+    
+    # Angle calculation
+    angles = np.arctan2(dy, dx)
+    mag = np.sqrt(dx**2 + dy**2)
+    
+    # Filter by magnitude to only keep strong edges
+    mask = mag > 20
+    angles = angles[mask]
+    
+    if len(angles) == 0:
+        return np.zeros(16, dtype=np.float32)
+        
+    hist, _ = np.histogram(angles, bins=16, range=(-np.pi, np.pi))
+    hist = hist.astype(np.float32)
+    norm = np.linalg.norm(hist)
+    return hist / norm if norm > 0 else hist
+
+def get_phash(image):
+    """
+    Returns a perceptual hash string for near-exact matching.
+    """
+    if isinstance(image, str):
+        image = Image.open(image)
+    return str(imagehash.phash(image))
 
 def cosine_similarity(query_emb, database_embs):
     # Dot product since vectors are normalized
@@ -331,7 +374,9 @@ def create_index(model, images_dir, db_manager, progress_callback=None):
                 color_rgb=top_color, 
                 texture_vec=texture_vec,
                 regions=region_data,
-                color_dist=color_dist
+                color_dist=color_dist,
+                edge_hist=get_edge_histogram(img),
+                phash=get_phash(img)
             )
         except Exception as e:
             print(f"Error indexing {f}: {e}")

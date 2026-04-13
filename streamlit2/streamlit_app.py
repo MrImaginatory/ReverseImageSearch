@@ -3,7 +3,8 @@ import os
 import json
 from PIL import Image
 import numpy as np
-from core import CLIPModel, create_index, get_color_distribution, get_texture_vector, auto_tune_weights, extract_foreground
+from core import CLIPModel, create_index, get_color_distribution, get_texture_vector, auto_tune_weights, extract_foreground, get_edge_histogram, get_phash
+import imagehash
 from database import DatabaseManager
 
 # Set page config
@@ -87,7 +88,11 @@ if uploaded_file is not None:
         
         # Show detected strategy
         st.markdown(f"**Strategy:** {strategy}")
-        st.caption(f"Color: {color_boost:.0%} | Texture: {texture_boost:.0%} | Semantic: {1 - color_boost - texture_boost:.0%}")
+        st.caption(f"Color: {color_boost:.0%} | Texture: {texture_boost:.0%} | Semantic: {1 - color_boost - texture_boost - 0.1:.0%} | Shape: 10%")
+        
+        # Edge Histogram Visualization (Small representation)
+        query_edge = get_edge_histogram(query_fg)
+        query_phash = get_phash(query_fg)
         
         # Color palette from foreground only
         query_colors = get_color_distribution(query_fg, k=5)
@@ -112,8 +117,10 @@ if uploaded_file is not None:
                     query_emb.flatten() if query_emb.ndim > 1 else query_emb, 
                     query_colors, 
                     query_texture=query_texture,
+                    query_edge=query_edge,
                     color_weight=color_boost, 
                     texture_weight=texture_boost,
+                    edge_weight=0.10,
                     limit=6
                 )
                 
@@ -125,23 +132,37 @@ if uploaded_file is not None:
                     st.success(f"Matched {len(results)} items using Hybrid Ranking")
                     
                     # 1. Display Founded Product
-                    name, total_score, p_score, c_score, t_score = top_result
+                    name, total_score, p_score, c_score, t_score, e_score, res_phash = top_result
                     img_path = os.path.join(IMAGES_DIR, name)
                     
+                    # Exact Match Logic (pHash + Score Gap)
+                    hash_diff = 100
+                    if res_phash and query_phash:
+                        hash_diff = imagehash.hex_to_hash(query_phash) - imagehash.hex_to_hash(res_phash)
+                    
+                    # Stricter identity check: pHash near-match OR extremely high scores with large gap
+                    score_gap = 0
+                    if len(results) > 1:
+                        score_gap = total_score - results[1][1]
+                        
+                    is_exact = (hash_diff <= 10) or (total_score > 0.85 and score_gap > 0.08)
+
                     st.markdown("### 🏆 Founded Product")
-                    if total_score >= 0.82 and p_score >= 0.81:
+                    if is_exact:
                         f_col1, f_col2 = st.columns([1, 1])
                         with f_col1:
-                            st.image(img_path, width=400)
+                            st.image(img_path, use_column_width=True)
                         with f_col2:
                             st.info(f"**Filename:** {name}")
                             st.metric("Hybrid Match", f"{total_score:.2%}")
-                            st.metric("AI Semantic Match", f"{p_score:.2%}")
+                            st.metric("Identity Confidence", "99%" if hash_diff < 5 else f"{total_score:.0%}")
                             st.progress(total_score)
-                            st.caption(f"Pattern: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f}")
+                            st.caption(f"AI: {p_score:.2f} | Color: {c_score:.2f} | Texture: {t_score:.2f} | Shape: {e_score:.2f}")
+                            if hash_diff <= 10:
+                                st.success("✅ Exact visual match confirmed via Perceptual Hash")
                     else:
-                        st.warning("⚠️ No exact product match found (Score below 75% confidence)")
-                        st.info("The uploaded image may not exist in the collection, or it may be too abstract to match reliably.")
+                        st.warning("⚠️ No exact product match found (Score below 85% or ambiguous)")
+                        st.info("The query doesn't match a specific item with high confidence. Displaying top candidates below.")
 
                     st.markdown("---")
                     
@@ -150,12 +171,12 @@ if uploaded_file is not None:
                         st.markdown("### 🔍 Similar Products")
                         other_results = other_results[:5]
                         cols = st.columns(3)
-                        for i, (name, total_score, p_score, c_score, t_score) in enumerate(other_results):
+                        for i, (name, total_score, p_score, c_score, t_score, e_score, ph) in enumerate(other_results):
                             with cols[i % 3]:
                                 img_path = os.path.join(IMAGES_DIR, name)
-                                st.image(img_path, width=280)
+                                st.image(img_path, use_column_width=True)
                                 st.markdown(f"**Match: {total_score:.1%}**")
-                                st.caption(f"P: {p_score:.2f} | C: {c_score:.2f} | T: {t_score:.2f}")
+                                st.caption(f"AI: {p_score:.2f} | Color: {c_score:.2f} | Shape: {e_score:.2f}")
                 else:
                     st.warning("No matches found.")
             else:

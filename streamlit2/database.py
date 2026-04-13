@@ -51,21 +51,39 @@ class DatabaseManager:
                 filename TEXT UNIQUE NOT NULL,
                 embedding VECTOR(512) NOT NULL,
                 color_rgb VECTOR(3),
-                texture_vector VECTOR(32)
+                texture_vector VECTOR(64),
+                edge_hist VECTOR(16),
+                phash TEXT
             )
         """)
         
         # Add columns if they don't exist (for existing DBs)
-        for col, size in [('color_rgb', 3), ('texture_vector', 32)]:
+        for col, size in [('color_rgb', 3), ('texture_vector', 64), ('edge_hist', 16)]:
             cur.execute(f"""
                 DO $$ 
                 BEGIN 
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                                    WHERE table_name='image_embeddings' AND column_name='{col}') THEN
                          EXECUTE 'ALTER TABLE image_embeddings ADD COLUMN ' || quote_ident('{col}') || ' VECTOR({size})';
+                    ELSE
+                         -- Handle resizing of texture_vector if needed
+                         IF '{col}' = 'texture_vector' THEN
+                             ALTER TABLE image_embeddings ALTER COLUMN texture_vector TYPE VECTOR({size});
+                         END IF;
                     END IF;
                 END $$;
             """)
+        
+        # Add phash column
+        cur.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name='image_embeddings' AND column_name='phash') THEN
+                     ALTER TABLE image_embeddings ADD COLUMN phash TEXT;
+                END IF;
+            END $$;
+        """)
             
         # [NEW] Region Embeddings Table
         cur.execute("""
@@ -92,24 +110,28 @@ class DatabaseManager:
         cur.close()
         conn.close()
 
-    def save_embedding(self, filename, embedding, color_rgb=None, texture_vec=None, regions=None, color_dist=None):
+    def save_embedding(self, filename, embedding, color_rgb=None, texture_vec=None, regions=None, color_dist=None, edge_hist=None, phash=None):
         """Inserts or updates an image embedding, color palette, and regions."""
         conn = self.get_connection()
         cur = conn.cursor()
         try:
             # 1. Main Embedding
             cur.execute("""
-                INSERT INTO image_embeddings (filename, embedding, color_rgb, texture_vector)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO image_embeddings (filename, embedding, color_rgb, texture_vector, edge_hist, phash)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (filename) DO UPDATE 
                 SET embedding = EXCLUDED.embedding,
                     color_rgb = EXCLUDED.color_rgb,
-                    texture_vector = EXCLUDED.texture_vector
+                    texture_vector = EXCLUDED.texture_vector,
+                    edge_hist = EXCLUDED.edge_hist,
+                    phash = EXCLUDED.phash
             """, (
                 filename, 
                 embedding.tolist(), 
                 color_rgb.tolist() if color_rgb is not None else None,
-                texture_vec.tolist() if texture_vec is not None else None
+                texture_vec.tolist() if texture_vec is not None else None,
+                edge_hist.tolist() if edge_hist is not None else None,
+                phash
             ))
             
             # 2. Add regions if provided
@@ -155,7 +177,7 @@ class DatabaseManager:
             cur.close()
             conn.close()
 
-    def search_hybrid(self, query_embedding, query_color_dist, query_texture=None, color_weight=0.3, texture_weight=0.2, limit=12):
+    def search_hybrid(self, query_embedding, query_color_dist, query_texture=None, query_edge=None, color_weight=0.3, texture_weight=0.2, edge_weight=0.1, limit=12):
         """
         Performs Advanced Hybrid Search using Localized Regions and Color Distributions.
         """
@@ -184,28 +206,36 @@ class DatabaseManager:
                            (1 - (e.embedding <=> %s::vector)) as global_semantic_score,
                            COALESCE(ls.best_region_score, 0) as local_semantic_score,
                            COALESCE(cs.color_dist_score, 0) as color_dist_score,
-                           (1 - (e.texture_vector <=> %s::vector)) as texture_score
+                           (1 - (e.texture_vector <=> %s::vector)) as texture_score,
+                           (1 - (COALESCE(e.edge_hist, '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]'::vector) <=> %s::vector)) as edge_score,
+                           e.phash
                     FROM image_embeddings e
                     LEFT JOIN LocalizedScores ls ON e.filename = ls.filename
                     LEFT JOIN ColorDistributionScores cs ON e.filename = cs.filename
                 )
                 SELECT filename, 
-                       ( (1.0 - %s - %s) * GREATEST(global_semantic_score, local_semantic_score) ) + 
+                       ( (1.0 - %s - %s - %s) * GREATEST(global_semantic_score, local_semantic_score) ) + 
                        (%s * color_dist_score) + 
-                       (%s * texture_score) AS total_similarity,
+                       (%s * texture_score) +
+                       (%s * edge_score) AS total_similarity,
                        GREATEST(global_semantic_score, local_semantic_score) as semantic_score,
                        color_dist_score,
-                       texture_score
+                       texture_score,
+                       edge_score,
+                       phash
                 FROM BaseMatches
-                WHERE global_semantic_score > 0.35 OR local_semantic_score > 0.45
+                WHERE global_semantic_score > 0.45 OR local_semantic_score > 0.55
                 ORDER BY total_similarity DESC
                 LIMIT %s
             """, (
                 query_embedding, 
-                query_color_dist[0][0].tolist(), # Using top query color for simplicity in SQL
+                query_color_dist[0][0].tolist(), 
                 query_embedding, 
-                query_texture.tolist() if query_texture is not None else query_embedding, 
-                color_weight, texture_weight, color_weight, texture_weight, limit
+                query_texture.tolist(),
+                query_edge.tolist() if (query_edge is not None and len(query_edge) == 16) else [0.0]*16,
+                color_weight, texture_weight, edge_weight,
+                color_weight, texture_weight, edge_weight,
+                limit
             ))
             return cur.fetchall()
         finally:
